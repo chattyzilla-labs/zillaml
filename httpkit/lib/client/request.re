@@ -76,7 +76,7 @@ module Headers = {
   let html = ("Content-Type", "text/html");
   let xml = ("Content-Type", "application/xml");
 
-  let add_header = (header, req: Request.t) => {
+  let add_header = (header, req: t) => {
     ...req,
     headers: [header, ...req.headers],
   };
@@ -84,12 +84,12 @@ module Headers = {
   let basic_auth_header = token => ("Authorization", "Basic " ++ token);
 };
 
-let set_body = (body, req: Request.t) => {
+let set_body = (body, req: t) => {
   ...req,
   body: Some(body),
 };
 
-let set_content_type = (content, req: Request.t) =>
+let set_content_type = (content, req: t) =>
   switch (content) {
   | `JSON => req |> Headers.add_header(Headers.json)
   | `FORM_URL_ENCODE => req |> Headers.add_header(Headers.form_url_encoded)

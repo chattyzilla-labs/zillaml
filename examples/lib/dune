@@ -1,6 +1,6 @@
 (library
   (name mlib)
   (flags (-w -40 -w +26))
-  (public_name hello-reason)
+  (public_name examples)
   (preprocess (pps ppx_jane))
   (libraries zillaml-httpkit-async  zillaml-httpkit console.lib pastel.lib fmt logs.fmt fmt.tty logs uri caqti caqti-async caqti-driver-postgresql))

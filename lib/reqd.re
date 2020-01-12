@@ -109,18 +109,18 @@ let request_body = ({request_body, _}) => request_body;
 let response = ({response_state, _}) =>
   switch (response_state) {
   | Waiting(_) => None
-  | [@implicit_arity] Streaming(response, _)
+  | Streaming(response, _)
   | Complete(response)
-  | [@implicit_arity] Upgrade(response, _) => Some(response)
+  | Upgrade(response, _) => Some(response)
   };
 
 let response_exn = ({response_state, _}) =>
   switch (response_state) {
   | Waiting(_) =>
     failwith("httpaf.Reqd.response_exn: response has not started")
-  | [@implicit_arity] Streaming(response, _)
+  | Streaming(response, _)
   | Complete(response)
-  | [@implicit_arity] Upgrade(response, _) => response
+  | Upgrade(response, _) => response
   };
 
 let respond_with_string = (t, response, str) => {
