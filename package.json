@@ -28,6 +28,7 @@
    "@opam/digestif": "0.8.0",
    "@opam/dune": "*",
    "@opam/faraday": "0.7.0",
+   "@opam/fpath": "*",
    "@opam/faraday-async": "0.7.0",
    "@opam/fmt": "*",
    "@opam/logs": "*",
