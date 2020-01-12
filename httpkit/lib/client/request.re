@@ -65,3 +65,39 @@ module Make =
 
   let send = M.send;
 };
+
+module Headers = {
+  let json = ("Content-Type", "application/json");
+  let form_url_encoded = (
+    "Content-Type",
+    "application/x-www-form-urlencoded",
+  );
+  let text = ("Content-Type", "text/plain");
+  let html = ("Content-Type", "text/html");
+  let xml = ("Content-Type", "application/xml");
+
+  let add_header = (header, req: Request.t) => {
+    ...req,
+    headers: [header, ...req.headers],
+  };
+  let user_agent_header = agent => ("User-Agent", agent);
+  let basic_auth_header = token => ("Authorization", "Basic " ++ token);
+};
+
+let set_body = (body, req: Request.t) => {
+  ...req,
+  body: Some(body),
+};
+
+let set_content_type = (content, req: Request.t) =>
+  switch (content) {
+  | `JSON => req |> Headers.add_header(Headers.json)
+  | `FORM_URL_ENCODE => req |> Headers.add_header(Headers.form_url_encoded)
+  | `TEXT => req |> Headers.add_header(Headers.text)
+  | `HTML => req |> Headers.add_header(Headers.html)
+  | `XML => req |> Headers.add_header(Headers.xml)
+  };
+let set_user_agent = (agent, req) =>
+  req |> Headers.add_header(Headers.user_agent_header(agent));
+let set_basic_auth = (token, req) =>
+  req |> Headers.add_header(Headers.basic_auth_header(token));
