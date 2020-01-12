@@ -1,5 +1,5 @@
 (executable
-  (package zillaml)
+  (package main)
   (name Main)
   (public_name Main)
   (preprocess (pps ppx_jane))
