@@ -13,7 +13,7 @@
   ],
   "esy": {
     "build": [
-      ["dune", "build", "-p", "zillaml,zillaml-async,zillaml-httpkit-async,zillaml-httpkit,websocketzilla,websocketzilla-async"]
+      ["dune", "build", "-p", "zillaml,zillaml-async,zillaml-httpkit-async,zillaml-httpkit,websocketzilla,websocketzilla-async,persistent-connection"]
     ],
     "buildDev": "refmterr dune build examples/Main.exe",
     "buildsInSource": "_build",
@@ -26,7 +26,8 @@
       ["esy-installer", "zillaml-httpkit-async.install"],
       ["esy-installer", "zillaml-httpkit.install"],
       ["esy-installer", "websocketzilla.install"],
-      ["esy-installer", "websocketzilla-async.install"]
+      ["esy-installer", "websocketzilla-async.install"],
+      ["esy-installer", "persistent-connection.install"]
     ],
     "release": {
       "bin": [],
