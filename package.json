@@ -3,13 +3,59 @@
   "version": "0.1.0",
   "description": "A high-performance, memory-efficient, and scalable web server for Reason/OCaml",
   "license": "BSD-3-clause",
+  "notes-ctd": [
+    "This is how you make an esy monorepo for development, but then release the monorepo as many individual packages:",
+    "1. Create a packageName-dev esy.json at the root and list the sum of all dependencies",
+    "2. Set the esy.build command to build a comma delimited list of the package names",
+    "3. Set the esy.install command to install each of those packages",
+    "4. Create separate esy.json files for each of those packages (see ./scripts/esy/)",
+    "5. Copy ./scripts/esy-prepublish.js in to your repo and change packages= to your set of packages."
+  ],
   "esy": {
-    "build": "refmterr dune build",
+    "build": [
+      ["dune", "build", "-p", "zillaml,zillaml-async,zillaml-httpkit-async,zillaml-httpkit,websocketzilla,websocketzilla-async"]
+    ],
     "buildDev": "refmterr dune build examples/Main.exe",
-    "NOTE": "Optional release Section. Customizes result of `esy release`",
     "buildsInSource": "_build",
     "buildEnv": {
       "ODOC_SYNTAX": "re"
+    },
+    "install": [
+      ["esy-installer", "zillaml.install"],
+      ["esy-installer", "zillaml-async.install"],
+      ["esy-installer", "zillaml-httpkit-async.install"],
+      ["esy-installer", "zillaml-httpkit.install"],
+      ["esy-installer", "websocketzilla.install"],
+      ["esy-installer", "websocketzilla-async.install"]
+    ],
+    "release": {
+      "bin": [],
+      "includePackages": [
+        "root",
+       "@opam/angstrom",
+       "@opam/astring",
+       "@opam/async",
+       "@opam/async_ssl",
+       "@opam/base64",
+       "@opam/bigstringaf",
+       "@opam/caqti",
+       "@opam/caqti-async",
+       "@opam/caqti-driver-postgresql",
+       "@opam/conduit",
+       "@opam/core",
+       "@opam/digestif",
+       "@opam/faraday",
+       "@opam/fpath",
+       "@opam/faraday-async",
+       "@opam/fmt",
+       "@opam/logs",
+       "@opam/ocplib-endian",
+       "@opam/ppx_jane",
+       "@opam/uri",
+       "@opam/ssl",
+        "ocaml"
+      ],
+      "rewritePrefix": true
     }
   },
   "dependencies": {
