@@ -1,0 +1,59 @@
+{
+  "name": "zillaml",
+  "version": "0.1.0",
+  "description": "A high-performance, memory-efficient, and scalable web server for Reason/OCaml",
+  "license": "BSD-3-clause",
+  "esy": {
+    "build": "refmterr dune build",
+    "buildDev": "refmterr dune build examples/Main.exe",
+    "NOTE": "Optional release Section. Customizes result of `esy release`",
+    "buildsInSource": "_build",
+    "buildEnv": {
+      "ODOC_SYNTAX": "re"
+    }
+  },
+  "dependencies": {
+   "@esy-ocaml/reason": ">= 3.4.0 < 3.6.0",
+   "@opam/angstrom": "0.12.1",
+   "@opam/astring": "*",
+   "@opam/async": "*",
+   "@opam/async_ssl": "*",
+   "@opam/base64": "3.2.0",
+   "@opam/bigstringaf": "0.6.0",
+   "@opam/caqti": "*",
+   "@opam/caqti-async": "*",
+   "@opam/caqti-driver-postgresql": "*",
+   "@opam/conduit": "*",
+   "@opam/core": "*",
+   "@opam/digestif": "0.8.0",
+   "@opam/dune": "*",
+   "@opam/faraday": "0.7.0",
+   "@opam/faraday-async": "0.7.0",
+   "@opam/fmt": "*",
+   "@opam/logs": "*",
+   "@opam/ocplib-endian": "*",
+   "@opam/ppx_jane": "*",
+   "@opam/uri": "*",
+   "@reason-native/console": "*",
+   "@reason-native/pastel": "*",
+   "@reason-native/rely": "*",
+   "ocaml": "~4.9.0",
+   "refmterr": "*",
+  "@opam/ssl": ">= 0.5.8"
+  },
+  "resolutions": {
+    "@opam/async": "v0.13.0",
+    "@opam/core": "v0.13.0",
+    "@opam/base": "v0.13.0",
+    "@opam/ppx_jane": "v0.13.0",
+    "@opam/async_ssl": "janestreet/async_ssl:async_ssl.opam#ae6cd21",
+    "@opam/ctypes": "dakotamurphyucf/ctypes:ctypes.opam#66aa571",
+    "@opam/ctypes-foreign": "dakotamurphyucf/ctypes:ctypes-foreign.opam#66aa571",
+    "@opam/conf-libssl": "esy-packages/esy-openssl#860ad7f"
+  },
+  "devDependencies": {
+    "@opam/merlin": "*",
+    "ocaml": "~4.9.0",
+    "@opam/odoc": "*"
+  }
+}

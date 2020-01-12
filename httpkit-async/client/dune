@@ -1,0 +1,6 @@
+(library
+  (name zillaml_httpkit_async_client)
+  (public_name zillaml-httpkit-async.client)
+  (preprocess (pps ppx_jane))
+  (libraries zillaml-httpkit zillaml-async async uri fpath))
+

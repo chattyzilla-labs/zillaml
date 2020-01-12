@@ -1,0 +1,25 @@
+opam-version: "2.0"
+maintainer: "Dakota Murphy <dakotamurphyucf@gmail.com>"
+license: "BSD-3-clause"
+name: "websocketzilla"
+homepage: "https://github.com/dakotamurphyucf/zillaml"
+bug-reports: "https://github.com/dakotamurphyucf/zillaml/issues"
+dev-repo: "git+https://github.com/dakotamurphyucf/zillaml.git"
+build: [
+  ["dune" "subst"] {pinned}
+  ["dune" "build" "-p" name "-j" jobs]
+  ["dune" "runtest" "-p" name] {with-test}
+]
+depends: [
+  "ocaml" {>= "4.03.0"}
+  "dune" {build}
+  "base64"   {>= "3.0.0"}
+  "alcotest" {with-test}
+  "bigstringaf"
+  "angstrom" {>= "0.7.0"}
+  "faraday"  {>= "0.5.0"}
+  "zillaml"
+  "result"
+]
+synopsis:
+  "Websocket implementation for use with zillaml"

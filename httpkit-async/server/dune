@@ -1,0 +1,6 @@
+(library
+  (name zillaml_httpkit_async_server)
+  (public_name zillaml-httpkit-async.server)
+  (preprocess (pps ppx_jane))
+  (libraries zillaml-httpkit zillaml websocketzilla-async zillaml-async async astring websocketzilla ))
+

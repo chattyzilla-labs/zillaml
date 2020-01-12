@@ -1,0 +1,7 @@
+(library
+ (name        websocketzilla)
+  (public_name websocketzilla)
+  (libraries
+    base64 angstrom faraday zillaml result bigstringaf)
+  (flags (:standard -safe-string)))
+

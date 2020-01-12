@@ -1,0 +1,5 @@
+(library
+  (name zillaml)
+  (flags (-w -40 -w +26))
+  (public_name zillaml)
+  (libraries angstrom faraday bigstringaf result))

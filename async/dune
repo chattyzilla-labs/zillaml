@@ -1,0 +1,16 @@
+(library
+ (name zillaml_async)
+ (public_name zillaml-async)
+ (libraries
+  async
+  core
+  faraday-async
+  zillaml
+  (select
+   ssl_io.re
+   from
+   (async_ssl -> ssl_io_real.re)
+   (!async_ssl -> ssl_io_dummy.re)))
+ (modules zillaml_async zillaml_async_intf ssl_io)
+ (flags
+  (:standard -safe-string)))

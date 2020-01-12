@@ -1,0 +1,5 @@
+
+(library
+  (name zillaml_httpkit)
+  (public_name zillaml-httpkit)
+  (libraries httpkit_client))

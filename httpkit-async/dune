@@ -1,0 +1,4 @@
+(library
+  (name zillaml_httpkit_async)
+  (public_name zillaml-httpkit-async)
+  (libraries zillaml-httpkit zillaml-httpkit-async.server zillaml-httpkit-async.client))

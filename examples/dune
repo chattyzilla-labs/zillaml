@@ -1,0 +1,6 @@
+(executable
+  (package zillaml)
+  (name Main)
+  (public_name Main)
+  (preprocess (pps ppx_jane))
+  (libraries mlib persistent_connection))

@@ -1,0 +1,28 @@
+opam-version: "2.0"
+maintainer: "Dakota Murphy <dakotamurphyucf@gmail.com>"
+license: "BSD-3-clause"
+name: "zillaml-httpkit-async"
+homepage: "https://github.com/dakotamurphyucf/zillaml"
+bug-reports: "https://github.com/dakotamurphyucf/zillaml/issues"
+dev-repo: "git+https://github.com/dakotamurphyucf/zillaml.git"
+build: [
+  ["dune" "subst"] {pinned}
+  ["dune" "build" "-p" name "-j" jobs]
+  ["dune" "runtest" "-p" name] {with-test}
+]
+depends: [
+  "ocaml" {>= "4.03.0"}
+  "dune" {build}
+  "astring"
+  "zillaml"
+  "async"
+  "uri"
+  "core"
+  "ppx_jane"
+  "zillaml-httpkit"
+  "websocketzilla-async"
+  "zillaml-async"
+  "websocketzilla"
+]
+synopsis:
+  "async support for zillaml-httpkit"
