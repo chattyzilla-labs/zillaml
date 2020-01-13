@@ -150,9 +150,11 @@ module Close_code = {
 module Frame = {
   type t = Bigstringaf.t;
 
+  let bit_is_set = (idx, v) => (v lsr idx) land 1 == 1;
   let is_fin = t => {
     let bits = Bigstringaf.unsafe_get(t, 0) |> Char.code;
-    bits land 1 lsl 8 == 1 lsl 8;
+    //bits land 1 lsl 8 == 1 lsl 8;
+    bit_is_set(7, bits);
   };
 
   let rsv = t => {

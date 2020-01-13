@@ -89,7 +89,7 @@ type error_handler =
         Websocketzilla.Wsd.schedule(wsd, bs, ~kind=`Text, ~off=0, ~len= String.length(str))
       }
 
-      let finalise_content = (accum_content) => String.concat(List.rev(accum_content) |> List.map(~f=Bigstringaf.to_string));
+      let finalise_content = (accum_content) => String.concat(List.rev(accum_content));
       let frame = (~opcode, ~is_fin, bs, ~off, ~len) =>
         switch opcode {
         | `Continuation =>
@@ -97,7 +97,7 @@ type error_handler =
             Log.Global.error("Bad frame in the middle of a fragmented message");
             Websocketzilla.Wsd.close(wsd);
           } else {
-            accum := [bs, ...accum^];
+            accum := [Bigstringaf.substring(bs, ~off, ~len), ...accum^];
             if(is_fin){
               let payload = "ClientMessage: " ++ finalise_content(accum^)
               accum := []
@@ -107,7 +107,11 @@ type error_handler =
         | `Text
         | `Binary =>
           if(List.is_empty(accum^)) {
-            ("ClientMessage: " ++ Bigstringaf.substring(bs, ~off, ~len)) |> send;
+            if(is_fin) {
+              ("ClientMessage: " ++ Bigstringaf.substring(bs, ~off, ~len)) |> send;
+            } else {
+              accum := [Bigstringaf.substring(bs, ~off, ~len)]
+            }
           } else {
             Log.Global.error("Bad frame in the middle of a fragmented message");
             Websocketzilla.Wsd.close(wsd);

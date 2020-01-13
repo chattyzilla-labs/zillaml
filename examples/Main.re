@@ -108,8 +108,8 @@ let testClient = () => {
         ~f= ((server_flags, is_server), ()) => {
           switch is_server {
           | true =>
-            let%bind () = testServer()
-            Mlib.Server.server(server_flags, ());
+            // let%bind () = testServer()
+            // Mlib.Server.server(server_flags, ());
             // let%bind result = Lib.Db.add_org("apple", "apple.com", "apple@apple.com")
             // switch result {
             // | Ok((id, _, _, _)) => print_endline("it worked baby: " ++ id)
@@ -117,7 +117,7 @@ let testClient = () => {
             //   | Database_error(str) => print_endline("db error still good: " ++ str)
             // };
             // };
-            // Mlib.Server.socket_server(server_flags, ());
+            Mlib.Server.socket_server(server_flags, ());
           | false => testClient()
           };
 
