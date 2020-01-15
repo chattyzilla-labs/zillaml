@@ -33,7 +33,7 @@ let create = (error_handler, request, request_body, writer, response_handler) =>
     let next_state =
       switch (response.status) {
       | `Switching_protocols => Upgraded(response)
-      | _ => [@implicit_arity] Received_response(response, body)
+      | _ => Received_response(response, body)
       };
 
     t.state = next_state;

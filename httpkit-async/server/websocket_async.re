@@ -1,5 +1,16 @@
 open Core;
 
+type ws_connection_handler = {
+  on_message: string => unit,
+  on_close: unit => unit
+};
+
+type ws_connection = {
+  wsd: Websocketzilla.Wsd.t,
+  send: string => unit,
+  id: int32
+};
+
 let regexComma = Str.regexp_string(",");
 let upgrade_present = headers =>
   Zillaml.Headers.get_multi(headers, "connection")

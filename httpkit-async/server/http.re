@@ -74,7 +74,9 @@ type error_handler =
   };
 
 
-  let create_socket_server = (~port, ~on_start, ~max_accepts_per_batch, ~check_request) => {
+ let random_int32 = () => Random.int32(Int32.max_value);
+
+  let create_socket_server = (~port, ~on_start, ~max_accepts_per_batch, ~check_request, ~on_connect)  => {
 
     let module Body = Zillaml.Body;
     let module Headers = Zillaml.Headers;
@@ -84,11 +86,17 @@ type error_handler =
 
     let websocket_handler = (_client_address, wsd) => {
       let accum = ref([]);
-      let send = (str) => {
-        let bs = Bigstringaf.of_string(~off=0, ~len=String.length(str), str)
-        Websocketzilla.Wsd.schedule(wsd, bs, ~kind=`Text, ~off=0, ~len= String.length(str))
+      let rec send = (str) => {
+        let { Websocket_async.on_close, on_message: _} = Lazy.force(t);
+        if (Websocketzilla.Wsd.is_closed(wsd)){
+          on_close()
+        } else {
+          let bs = Bigstringaf.of_string(~off=0, ~len=String.length(str), str)
+          Websocketzilla.Wsd.schedule(wsd, bs, ~kind=`Text, ~off=0, ~len= String.length(str))
+        }
       }
-
+      and t = lazy(on_connect({  Websocket_async.wsd, send, id: random_int32() }))
+      let { Websocket_async.on_message, on_close } = Lazy.force(t);
       let finalise_content = (accum_content) => String.concat(List.rev(accum_content));
       let frame = (~opcode, ~is_fin, bs, ~off, ~len) =>
         switch opcode {
@@ -96,19 +104,20 @@ type error_handler =
           if(List.is_empty(accum^)) {
             Log.Global.error("Bad frame in the middle of a fragmented message");
             Websocketzilla.Wsd.close(wsd);
+            on_close();
           } else {
             accum := [Bigstringaf.substring(bs, ~off, ~len), ...accum^];
             if(is_fin){
-              let payload = "ClientMessage: " ++ finalise_content(accum^)
+              let payload = finalise_content(accum^)
               accum := []
-              send(payload)
+              on_message(payload);
             }
           };
         | `Text
         | `Binary =>
           if(List.is_empty(accum^)) {
             if(is_fin) {
-              ("ClientMessage: " ++ Bigstringaf.substring(bs, ~off, ~len)) |> send;
+              Bigstringaf.substring(bs, ~off, ~len) |> on_message;
             } else {
               accum := [Bigstringaf.substring(bs, ~off, ~len)]
             }
@@ -116,10 +125,12 @@ type error_handler =
             Log.Global.error("Bad frame in the middle of a fragmented message");
             Websocketzilla.Wsd.close(wsd);
             accum := []
+            on_close();
           };
         | `Connection_close =>
             Websocketzilla.Wsd.close(wsd);
             accum := [];
+            on_close();
         | `Ping => Websocketzilla.Wsd.send_ping(wsd)
         | `Pong
         | `Other(_) => print_endline("other")
@@ -127,9 +138,12 @@ type error_handler =
       let eof = () => {
         Log.Global.error("EOF\n%!");
         Websocketzilla.Wsd.close(wsd);
+        on_close();
       };
       {Websocketzilla.Server_connection.frame, eof};
     };
+    // NOTE: this can lead to possible memory leak for applications that rely on the on_close callback to be called when a connection is closed
+    // TODO reformat this so that we can notify the application that the connecction was closed when an error occurs so it can clean up needed resources
     let error_handler = (wsd, `Exn(exn)) => {
       let message = Exn.to_string(exn);
       let payload = Bytes.of_string(message);

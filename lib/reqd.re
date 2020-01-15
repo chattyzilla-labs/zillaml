@@ -182,7 +182,7 @@ let unsafe_respond_with_streaming = (~flush_headers_immediately, t, response) =>
     if (t.persistent) {
       t.persistent = Response.persistent_connection(response);
     };
-    t.response_state = [@implicit_arity] Streaming(response, response_body);
+    t.response_state = Streaming(response, response_body);
     done_waiting(when_done_waiting);
     response_body;
   | Streaming(_)
@@ -203,7 +203,7 @@ let respond_with_streaming = (~flush_headers_immediately=false, t, response) => 
 
 let upgrade_handler = t =>
   switch (t.response_state) {
-  | [@implicit_arity] Upgrade(_, upgrade_handler) => Some(upgrade_handler)
+  | Upgrade(_, upgrade_handler) => Some(upgrade_handler)
   | _ => None
   };
 
@@ -215,7 +215,7 @@ let unsafe_respond_with_upgrade = (t, headers, upgrade_handler) =>
     if (t.persistent) {
       t.persistent = Response.persistent_connection(response);
     };
-    t.response_state = [@implicit_arity] Upgrade(response, upgrade_handler);
+    t.response_state = Upgrade(response, upgrade_handler);
     Body.close_reader(t.request_body);
     done_waiting(when_done_waiting);
   | Streaming(_)
@@ -262,9 +262,9 @@ let report_error = (t, error) => {
      * outstanding call to the [error_handler], but an intervening exception
      * has been reported as well. */
     failwith("httpaf.Reqd.report_exn: NYI")
-  | ([@implicit_arity] Streaming(_response, response_body), `Ok) =>
+  | (Streaming(_response, response_body), `Ok) =>
     Body.close_writer(response_body)
-  | ([@implicit_arity] Streaming(_response, response_body), `Exn(_)) =>
+  | (Streaming(_response, response_body), `Exn(_)) =>
     Body.close_writer(response_body);
     Writer.close_and_drain(t.writer);
   | (Complete(_) | Streaming(_) | Upgrade(_) | Waiting(_), _) =>
@@ -329,7 +329,7 @@ let requires_input = ({request_body, _}) => !Body.is_closed(request_body);
 let requires_output = ({response_state, _}) =>
   switch (response_state) {
   | Complete(_) => false
-  | [@implicit_arity] Streaming(_, response_body) =>
+  | Streaming(_, response_body) =>
     !Body.is_closed(response_body) || Body.has_pending_output(response_body)
   | Waiting(_)
   | Upgrade(_) => true

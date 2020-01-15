@@ -35,11 +35,11 @@ let create = frame_handler => {
 
 let transition = (t, state) =>
   switch (state) {
-  | [@implicit_arity] AU.Done(consumed, ())
-  | [@implicit_arity] AU.Fail(0 as consumed, _, _) =>
+  | AU.Done(consumed, ())
+  | AU.Fail(0 as consumed, _, _) =>
     t.parse_state = Done;
     consumed;
-  | [@implicit_arity] AU.Fail(consumed, marks, msg) =>
+  | AU.Fail(consumed, marks, msg) =>
     t.parse_state = Fail(`Parse((marks, msg)));
     consumed;
   | AU.Partial({committed, continue}) =>
@@ -49,7 +49,7 @@ let transition = (t, state) =>
 and start = (t, state) =>
   switch (state) {
   | AU.Done(_) => failwith("websocketaf.Reader.unable to start parser")
-  | [@implicit_arity] AU.Fail(0, marks, msg) =>
+  | AU.Fail(0, marks, msg) =>
     t.parse_state = Fail(`Parse((marks, msg)))
   | AU.Partial({committed: 0, continue}) => t.parse_state = Partial(continue)
   | _ => assert(false)

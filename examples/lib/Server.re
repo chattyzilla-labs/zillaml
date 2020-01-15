@@ -51,39 +51,14 @@ let error_handler:
 
 let router = Router.run_router([ping_router]) |> Router.create_router;
 
-
-// let onConnected = ({ reader, writer, app_to_ws, ws_to_app, close_finished, request }: Websocket_async.t) => {
-//     let read_loop = Websocket_async.Event_Listeners.loop_pipe_reader(app_to_ws, ~onClientMessage=(msg)=> Pipe.write(ws_to_app, "ClientMessage: " ++ msg));
-
-
-//     let finally = () => {
-//         Pipe.close(ws_to_app);
-//         Pipe.close_read(app_to_ws);
-//         let%bind () = Writer.close(writer)
-//         and () = Reader.close(reader)
-//         let%bind (_reason, str, _info) = close_finished()
-//         print_endline(str);
-//         Deferred.unit;
-//       };
-
-//       Monitor.protect(
-//         ~finally,
-//         () => {
-//             Deferred.any([
-//                 read_loop,
-//                 Pipe.closed(ws_to_app),
-//                 Pipe.closed(app_to_ws),
-//             ])
-//         },
-//       );
-
-// };
-
 let socket_server = ((port, accepts), ()) => Http.create_socket_server(
     ~port,
     ~on_start=on_start,
     ~max_accepts_per_batch=accepts,
     ~check_request=(req) => Deferred.return(Websocket_async.upgrade_present(req.headers) && Websocket_async.default_ws_path(req)),
+    ~on_connect=(ws) => {
+      { Websocket_async.on_message: (msg) => ws.send(msg), on_close: () => ()}
+    }
 );
 
 let server = ((port, accepts), ()) => Http.create_server(
