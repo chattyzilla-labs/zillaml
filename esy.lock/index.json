@@ -1,5 +1,5 @@
 {
-  "checksum": "fee8f4eb611f4a5b89c5c31ede989458",
+  "checksum": "39e037bd5e407ccdcb6b70966cdebfc9",
   "root": "zillaml@link-dev:./package.json",
   "node": {
     "zillaml@link-dev:./package.json": {
@@ -17,7 +17,8 @@
         "@reason-native/rely@3.1.0@d41d8cd9",
         "@reason-native/pastel@0.2.3@d41d8cd9",
         "@reason-native/console@0.1.0@d41d8cd9",
-        "@opam/uri@opam:3.1.0@d38ac0ae", "@opam/ssl@opam:0.5.9@44a7fdbe",
+        "@opam/yojson@opam:1.7.0@7056d985", "@opam/uri@opam:3.1.0@d38ac0ae",
+        "@opam/ssl@opam:0.5.9@44a7fdbe",
         "@opam/ppx_jane@opam:v0.13.0@f4d30f53",
         "@opam/ocplib-endian@opam:1.0@aa720242",
         "@opam/logs@opam:0.7.0@1d03143e", "@opam/fpath@opam:0.7.2@45477b93",

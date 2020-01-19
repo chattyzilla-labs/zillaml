@@ -117,7 +117,8 @@ let testClient = () => {
             //   | Database_error(str) => print_endline("db error still good: " ++ str)
             // };
             // };
-            Mlib.Server.socket_server(server_flags, ());
+            // Mlib.Server.socket_server(server_flags, ());
+            Mlib.Server.pubsub_server(server_flags, ());
           | false => testClient()
           };
 

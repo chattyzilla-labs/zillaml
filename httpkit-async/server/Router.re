@@ -32,8 +32,10 @@ type routeResponseT = {
   };
 
   let check_req_path = (~path, req: Zillaml.Request.t) => {
-    Uri.of_string(req.target) |> Uri.path  |> String.equal(path);
+    Uri.of_string(req.target) |> Uri.path |> String.split_on_char('?') |> List.hd |> String.equal(path);
   };
+
+  let get_path = (req: Zillaml.Request.t) => Uri.of_string(req.target) |> Uri.path |> String.split_on_char('/') |> List.tl;
 
   let create_router = routerFn => (req: Zillaml.Request.t, body_) => {
     let body = switch body_ {

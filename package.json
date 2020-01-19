@@ -54,6 +54,7 @@
        "@opam/ppx_jane",
        "@opam/uri",
        "@opam/ssl",
+       "@opam/yojson",
         "ocaml"
       ],
       "rewritePrefix": true
@@ -82,6 +83,7 @@
    "@opam/ocplib-endian": "*",
    "@opam/ppx_jane": "*",
    "@opam/uri": "*",
+    "@opam/yojson": "*",
    "@reason-native/console": "*",
    "@reason-native/pastel": "*",
    "@reason-native/rely": "*",

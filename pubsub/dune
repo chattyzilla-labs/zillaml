@@ -1,5 +1,5 @@
 (library (name pubsub)
  (flags (-w -40 -w +26))
  (public_name pubsub)
- (libraries async core websocketzilla websocketzilla-async zillaml-async zillaml-httpkit-async zillaml console.lib pastel.lib fmt logs.fmt fmt.tty logs)
+ (libraries async core websocketzilla websocketzilla-async zillaml-async zillaml-httpkit-async zillaml console.lib pastel.lib fmt logs.fmt fmt.tty logs yojson)
  (preprocess (pps ppx_jane)))

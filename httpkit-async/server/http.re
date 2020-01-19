@@ -84,7 +84,7 @@ type error_handler =
     let module Response = Zillaml.Response;
     let module Status = Zillaml.Status;
 
-    let websocket_handler = (_client_address, wsd) => {
+    let websocket_handler = (req: Zillaml.Request.t, _client_address, wsd) => {
       let accum = ref([]);
       let rec send = (str) => {
         let { Websocket_async.on_close, on_message: _} = Lazy.force(t);
@@ -95,7 +95,7 @@ type error_handler =
           Websocketzilla.Wsd.schedule(wsd, bs, ~kind=`Text, ~off=0, ~len= String.length(str))
         }
       }
-      and t = lazy(on_connect({  Websocket_async.wsd, send, id: random_int32() }))
+      and t = lazy(on_connect({  Websocket_async.wsd, send, id: random_int32(), path: get_path(req) }))
       let { Websocket_async.on_message, on_close } = Lazy.force(t);
       let finalise_content = (accum_content) => String.concat(List.rev(accum_content));
       let frame = (~opcode, ~is_fin, bs, ~off, ~len) =>
@@ -160,10 +160,10 @@ type error_handler =
       Body.write_string(body, message);
       Body.close_writer(body);
     };
-    let upgrade_handler = (addr, socket) =>
+    let upgrade_handler = (req: Zillaml.Request.t, addr, socket) =>
       Websocketzilla_async.Server.create_upgraded_connection_handler(
         ~error_handler,
-        ~websocket_handler,
+        ~websocket_handler=websocket_handler(req),
         addr,
         socket
       );
@@ -171,7 +171,7 @@ type error_handler =
       let req = Zillaml.Reqd.request(reqd);
       let io_handler = {
           switch%bind(check_request(req)) {
-          | true => Websocketzilla_async.Server.respond_with_upgrade(reqd, upgrade_handler(addr))
+          | true => Websocketzilla_async.Server.respond_with_upgrade(reqd, upgrade_handler(req, addr))
               >>| (
                 fun
                 | Ok () => ()
