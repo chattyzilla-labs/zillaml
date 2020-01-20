@@ -332,7 +332,7 @@ let unsubscribe = (exchange, ws: ws_connection, topic) => {
     remove(find_exn(exchange.bindings, node.id), edge.id);
     remove(find_exn(exchange.topic_edge, node.id), string_of_word(edge.word));
   };
-  let updated_node = { ...node, edge_count: remove_edge ? node.edge_count - 1 : node.edge_count };
+  let updated_node = { ...node, edge_count: remove_edge ? node.edge_count - 1 : node.edge_count, binding_count: node.binding_count - 1 };
 
   let rec aux = (topic) => {
     switch (topic) {
