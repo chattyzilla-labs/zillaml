@@ -240,7 +240,7 @@ let subscribe = (exchange, ws: ws_connection, topic) => {
       set(edge_hash, ~key=word_str, ~data=new_edge)
       set(exchange.topic_edge, ~key=node.id, ~data=edge_hash);
       let binding_hash = Hashtbl.create((module Int32), ~growth_allowed=true);
-      set(binding_hash, ~key=edge.id, ~data=[ws.id]);
+      set(binding_hash, ~key=new_edge.id, ~data=[ws.id]);
       set(
         exchange.bindings,
         ~key=node.id,
@@ -339,6 +339,7 @@ let unsubscribe = (exchange, ws: ws_connection, topic) => {
     | [] => ()
     | _lst => {
       let (node, edge) = get_leaf(exchange, topic);
+      // need to consider bindingcount and edge count
       switch(node.binding_count){
         | 0 =>
           remove(exchange.topic_node, node.id);
@@ -497,6 +498,8 @@ let on_connect = (ws) => {
       // on close is where we take care of clean-up task for the connection including unsubscribing to topics
       let on_close = () => {
         Hashtbl.iter(topics, ~f=(topic) => unsubscribe(exchange, ws, topic))
+        Hashtbl.remove(exchange.connections, ws.id);
+        // check connections is empty and remove from exchange tabble
       };
 
       { Websocket_async.on_message, on_close }
