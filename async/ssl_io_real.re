@@ -1,6 +1,6 @@
 /*----------------------------------------------------------------------------
- *  Copyright (c) 2019 Ant nio Nuno Monteiro
- *
+ *  Copyright (c) 2019 Antonio Nuno Monteiro
+ *  Copyright (c) 2020 Dakota Murphy
  *  All rights reserved.
  *
  *  Redistribution and use in source and binary forms, with or without

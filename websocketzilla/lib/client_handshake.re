@@ -5,7 +5,6 @@ type t = {
   body: Zillaml.Body.t([ | `write]),
 };
 
-/* TODO(anmonteiro): yet another argument, `~config` */
 let create = (~nonce, ~headers, ~error_handler, ~response_handler, target) => {
   let connection = Zillaml.Client_connection.create(~config=?None, ());
   let body =

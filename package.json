@@ -87,7 +87,7 @@
    "@reason-native/console": "*",
    "@reason-native/pastel": "*",
    "@reason-native/rely": "*",
-   "ocaml": "~4.9.0",
+   "ocaml": "~4.8.0",
    "refmterr": "*",
   "@opam/ssl": ">= 0.5.8"
   },
@@ -103,7 +103,7 @@
   },
   "devDependencies": {
     "@opam/merlin": "*",
-    "ocaml": "~4.9.0",
+    "ocaml": "~4.8.0",
     "@opam/odoc": "*"
   }
 }

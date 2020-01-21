@@ -1,7 +1,7 @@
 /*----------------------------------------------------------------------------
     Copyright (c) 2018 Inhabited Type LLC.
     Copyright (c) 2019 António Nuno Monteiro
-
+    Copyright (c) 2020 Dakota Murphy
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without

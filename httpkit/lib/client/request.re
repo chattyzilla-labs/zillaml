@@ -84,10 +84,7 @@ module Headers = {
   let basic_auth_header = token => ("Authorization", "Basic " ++ token);
 };
 
-let set_body = (body, req: t) => {
-  ...req,
-  body: Some(body),
-};
+let set_body = (body, req: t) => {...req, body: Some(body)};
 
 let set_content_type = (content, req: t) =>
   switch (content) {

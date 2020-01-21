@@ -33,10 +33,10 @@
     POSSIBILITY OF SUCH DAMAGE.
   ----------------------------------------------------------------------------*/
 
-/** Http/af is a high-performance, memory-efficient, and scalable web server
+/** Zillaml is a high-performance, memory-efficient, and scalable web server
     for OCaml. It implements the HTTP 1.1 specification with respect to
     parsing, serialization, and connection pipelining. For compatibility,
-    http/af respects the imperatives of the [Server_connection] header when handling
+    Zillaml respects the imperatives of the [Server_connection] header when handling
     HTTP 1.0 connections.
 
     To use this library effectively, the user must be familiar with the HTTP
