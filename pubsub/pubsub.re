@@ -2,6 +2,8 @@
  * Important! do not interact with the global hashtables outside of on_connect, on_message, and on_close
  * so that all operations remain thread safe. To test if the current runnning thread is holding the async lock
  * you can run Thread_safe.am_holding_async_lock(). It will return true if you are currently runningin the context of the async event loop
+ * This application works as a finite state machine so you will notice a lot of unsafe hash tbl operations
+ * because the logic assumes the existence of data in some hashtbls. The state of the application would otherwise be invalid if the operations threw an exception
  */
 open Core;
 open Async;
@@ -432,7 +434,7 @@ let unsubscribe = (exchange, ws: ws_connection, topic) => {
       string_of_word(edge.word),
     );
     /* if node bindings hash is empty and node is not root  remove node hash*/
-    if(is_empty(find_exn(exchange.bindings, node.id)) && !is_root){
+    if (is_empty(find_exn(exchange.bindings, node.id)) && !is_root) {
       remove(exchange.bindings, node.id);
     };
   };
@@ -447,52 +449,59 @@ let unsubscribe = (exchange, ws: ws_connection, topic) => {
     switch (topic) {
     | [] => ()
     | _lst =>
-      let has_bindings = switch(find(exchange.bindings, node.id)){
+      let has_bindings =
+        switch (find(exchange.bindings, node.id)) {
         | None => false
-        | Some(hash) => switch (find(hash, edge.id)) {
+        | Some(hash) =>
+          switch (find(hash, edge.id)) {
           | Some(_lst) => true
           | None => false
+          }
         };
-      };
-       /* if edge has bindings we are done */
-      switch (has_bindings) {
-      | true => ()
-      | false =>
-        remove(find_exn(exchange.topic_edge, node.id), string_of_word(edge.word));
-        let updated_node = {
-          ...node,
-          edge_count: node.edge_count - 1,
-        };
-        set(exchange.topic_node, ~key=updated_node.id, ~data=updated_node);
-        /* if node still has edges or is root we are don*/
-        switch (is_empty(find_exn(exchange.topic_edge, node.id)) && Int32.(node.id != exchange.root_node)) {
-        | false => ()
-        | true =>
-          // remove node hash in topic edge
-          remove(exchange.topic_edge, node.id);
-          let topic' = List.rev(topic) |> List.tl_exn |> List.rev;
-          let (node, edge) = get_leaf(exchange, topic');
-          set(
+      /* if edge has bindings we are done */
+      has_bindings
+        ? ()
+        : {
+          remove(
             find_exn(exchange.topic_edge, node.id),
-            ~key=string_of_word(edge.word),
-            ~data={...edge, child: None}
+            string_of_word(edge.word),
           );
-          aux(node, edge, topic');
+          let updated_node = {...node, edge_count: node.edge_count - 1};
+          // substract edge_count from node
+          set(exchange.topic_node, ~key=updated_node.id, ~data=updated_node);
+          /* if node still has edges or is root we are done*/
+          switch (
+            is_empty(find_exn(exchange.topic_edge, node.id))
+            && Int32.(node.id != exchange.root_node)
+          ) {
+          | false => ()
+          | true =>
+            // remove node hash in topic edge
+            remove(exchange.topic_edge, node.id);
+            let topic' = List.rev(topic) |> List.tl_exn |> List.rev;
+            // get next leaf
+            let (node, edge) = get_leaf(exchange, topic');
+            // set the edge child to None and recursivly call aux
+            set(
+              find_exn(exchange.topic_edge, node.id),
+              ~key=string_of_word(edge.word),
+              ~data={...edge, child: None},
+            );
+            aux(node, edge, topic');
+          };
         };
-      };
     };
   };
 
   /* if edge has node we are done */
   switch (edge.child) {
   | Some(_id) => ()
-  | None => {
+  | None =>
     // if root node done
     if (!is_root) {
       let topic' = List.rev(topic) |> List.tl_exn |> List.rev;
       aux(node, edge, topic');
-    };
-  }
+    }
   };
 };
 
