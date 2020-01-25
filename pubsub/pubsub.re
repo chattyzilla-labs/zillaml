@@ -23,6 +23,7 @@ type action =
   | Subscribe(topic)
   | Unsubscribe(topic);
 
+// TODO: set up so code takes advantage of phantom types for all the ids
 type topic_node = {
   id: int32,
   edge_count: int,
@@ -36,14 +37,54 @@ type topic_edge = {
   word,
 };
 
+/**
+ *  conceptually the group of hashes that make up an exchange represents a tree
+ *  ( e(w) / ) reps a topic_edge of word w,
+ *  (_) represents no next node <edge.child == None>,
+ *  ([c]) list of connection id
+ *  (rn) root node,
+ *  (n) non root node
+ *
+ *                          Tree
+ *          _________________________________________
+ *                           rn
+ *               [c] <- e(w) / \ e(w) -> [c]
+ *                         _   n
+ *                 [c] <- e(w) / \ e(w) -> [c]
+ *                           n   _
+ *               c] <- e(w) /
+ *                        _
+ *
+ *  This was chosen with performance of application, and application metrics code in mind.
+ *  Also for flexibility in gathering metrics.
+ */
+
 type exchange = {
   root_node: int32,
+  /**
+   * hash map that links node id to topic node
+   * node_id -> topic_node
+   */
   topic_node: Core.Hashtbl.t(int32, topic_node),
+  /**
+   * hash map thath links a node id to a hash map of the string representation of a word to a topic edge
+   * node_id -> word -> topic_edge
+  */
   topic_edge: Core.Hashtbl.t(int32, Core.Hashtbl.t(string, topic_edge)),
+  /**
+   * hash map that links a node id to a hash map that links a topic edge id to a list of connection ids
+   * node_id -> edge_id -> list(connection_id)
+   */
   bindings: Core.Hashtbl.t(int32, Core.Hashtbl.t(int32, list(int32))),
+  /**
+   * hash map that links a connection id to a websocket connection
+   * connection_id -> ws_connection
+   */
   connections: Core.Hashtbl.t(int32, ws_connection),
 };
+
 let random_int32 = () => Random.int32(Int32.max_value);
+
 let create_node = (~edge_count=0, ~binding_count=0, id) => {
   id,
   edge_count,
@@ -370,6 +411,8 @@ let unsubscribe = (exchange, ws: ws_connection, topic) => {
   open Hashtbl;
 
   let (node, edge) = get_leaf(exchange, topic);
+  let is_root = Int32.(node.id == exchange.root_node);
+  // find bindings list and remove connection
   change(
     find_exn(exchange.bindings, node.id),
     edge.id,
@@ -381,54 +424,75 @@ let unsubscribe = (exchange, ws: ws_connection, topic) => {
   let bindings_list =
     find_exn(find_exn(exchange.bindings, node.id), edge.id);
   let remove_edge = List.is_empty(bindings_list);
+  // if bindings list is empty remove edge hash
   if (remove_edge) {
     remove(find_exn(exchange.bindings, node.id), edge.id);
     remove(
       find_exn(exchange.topic_edge, node.id),
       string_of_word(edge.word),
     );
+    /* if node bindings hash is empty and node is not root  remove node hash*/
+    if(is_empty(find_exn(exchange.bindings, node.id)) && !is_root){
+      remove(exchange.bindings, node.id);
+    };
   };
+  // update node update edge count when edge is removed and this is the root node. If not root this is done later
   let updated_node = {
     ...node,
-    edge_count: remove_edge ? node.edge_count - 1 : node.edge_count,
+    edge_count: remove_edge && is_root ? node.edge_count - 1 : node.edge_count,
     binding_count: node.binding_count - 1,
   };
-
-  let rec aux = topic => {
+  set(exchange.topic_node, ~key=updated_node.id, ~data=updated_node);
+  let rec aux = (node: topic_node, edge, topic) => {
     switch (topic) {
     | [] => ()
     | _lst =>
-      let (node, edge) = get_leaf(exchange, topic);
-      // need to consider bindingcount and edge count
-      switch (node.binding_count) {
-      | 0 =>
-        remove(exchange.topic_node, node.id);
-        remove(exchange.topic_edge, node.id);
-      | _count =>
-        switch (find(find_exn(exchange.bindings, node.id), edge.id)) {
-        | None =>
-          remove(
-            find_exn(exchange.topic_edge, node.id),
-            string_of_word(edge.word),
-          )
-        | Some(_) => ()
-        }
+      let has_bindings = switch(find(exchange.bindings, node.id)){
+        | None => false
+        | Some(hash) => switch (find(hash, edge.id)) {
+          | Some(_lst) => true
+          | None => false
+        };
       };
-      if (List.length(topic) > 1) {
-        let topic' = List.rev(topic) |> List.tl_exn |> List.rev;
-        aux(topic');
+       /* if edge has bindings we are done */
+      switch (has_bindings) {
+      | true => ()
+      | false =>
+        remove(find_exn(exchange.topic_edge, node.id), string_of_word(edge.word));
+        let updated_node = {
+          ...node,
+          edge_count: node.edge_count - 1,
+        };
+        set(exchange.topic_node, ~key=updated_node.id, ~data=updated_node);
+        /* if node still has edges or is root we are don*/
+        switch (is_empty(find_exn(exchange.topic_edge, node.id)) && Int32.(node.id != exchange.root_node)) {
+        | false => ()
+        | true =>
+          // remove node hash in topic edge
+          remove(exchange.topic_edge, node.id);
+          let topic' = List.rev(topic) |> List.tl_exn |> List.rev;
+          let (node, edge) = get_leaf(exchange, topic');
+          set(
+            find_exn(exchange.topic_edge, node.id),
+            ~key=string_of_word(edge.word),
+            ~data={...edge, child: None}
+          );
+          aux(node, edge, topic');
+        };
       };
     };
   };
-  switch (updated_node.edge_count) {
-  | 0 when Int32.(updated_node.id != exchange.root_node) =>
-    remove(exchange.topic_node, node.id);
-    remove(exchange.topic_edge, node.id);
-    if (List.length(topic) > 1) {
+
+  /* if edge has node we are done */
+  switch (edge.child) {
+  | Some(_id) => ()
+  | None => {
+    // if root node done
+    if (!is_root) {
       let topic' = List.rev(topic) |> List.tl_exn |> List.rev;
-      aux(topic');
+      aux(node, edge, topic');
     };
-  | _int => set(exchange.topic_node, ~key=updated_node.id, ~data=updated_node)
+  }
   };
 };
 
@@ -557,8 +621,7 @@ let on_connect = ws => {
         Hashtbl.set(topics, ~key=string_of_topic(topic), ~data=topic);
       | Some(_) => ()
       }
-
-    // add validation to make sure this is a valid topic ie no # or *
+    // TODO add validation to make sure this is a valid topic ie no # or *
     | Publish(payload) => publish(exchange, payload)
     | Unsubscribe(topic) =>
       unsubscribe(exchange, ws, topic);
@@ -569,7 +632,11 @@ let on_connect = ws => {
   let on_close = () => {
     Hashtbl.iter(topics, ~f=topic => unsubscribe(exchange, ws, topic));
     Hashtbl.remove(exchange.connections, ws.id);
-    // check connections is empty and remove from exchange tabble
+    /* check connections is empty and remove from exchange tabbl*/
+    switch (Hashtbl.is_empty(exchange.connections)) {
+    | false => ()
+    | true => Hashtbl.remove(exchange_table, exchange_name)
+    };
   };
 
   {Websocket_async.on_message, on_close};
