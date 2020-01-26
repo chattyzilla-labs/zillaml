@@ -70,4 +70,4 @@ let server = ((port, accepts), ()) => Http.create_server(
     ~reqlogger=Some(Common.req_logger)
 );
 
-let pubsub_server = Pubsub.socket_server;
+let pubsub_server = Pubsubzilla.Server.socket_server;

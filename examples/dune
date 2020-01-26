@@ -1,6 +1,7 @@
 (executable
   (package main)
   (name Main)
+  (ocamlopt_flags (-S))
   (public_name Main)
   (preprocess (pps ppx_jane))
   (libraries mlib persistent_connection))

@@ -6,7 +6,8 @@
  * This application works as a finite state machine so you will notice a lot of unsafe hash tbl operations
  * because the logic assumes the existence of data in some hashtbls. The state of the application would otherwise be invalid if the operations threw an exception
  *
- * TODO: refactor core code into module, abstract away connection so it is not coupled to a ws connection so this code can be reused for pubsub client snapshots,
+ * TODO: refactor core code into module, abstract away connection so it is not coupled to a ws connection so this code can be reused for pubsub client, snapshots,
+ * subscription/unsubscribe and publishing confirmations, retry sending msgs if no confirmation by subscription
  */
 open Core;
 open Async;
@@ -40,6 +41,15 @@ type topic_edge = {
   parent: int32,
   child: option(int32),
   word,
+};
+
+// this type serves as a common interface for client and server implementation
+// this allows client code to use the same exchange management code as server.
+// Client can use this to reuse the same connection for all subscriptions to a topic in an exchange.
+// send on client side would be a callback onMessage function implemented by a subscription
+type connection = {
+  id: int32,
+  send: string => unit
 };
 
 /**
@@ -82,10 +92,10 @@ type exchange = {
    */
   bindings: Core.Hashtbl.t(int32, Core.Hashtbl.t(int32, list(int32))),
   /**
-   * hash map that links a connection id to a websocket connection
-   * connection_id -> ws_connection
+   * hash map that links a connection id to a connection
+   * connection_id -> connection
    */
-  connections: Core.Hashtbl.t(int32, ws_connection),
+  connections: Core.Hashtbl.t(int32, connection),
 };
 
 let random_int32 = () => Random.int32(Int32.max_value);
@@ -102,6 +112,8 @@ let create_edge = (~child=None, parent, word) => {
   child,
   word,
 };
+
+let create_conn_from_ws = (ws: ws_connection) => {id: ws.id, send: ws.send};
 
 let string_of_word =
   fun
@@ -182,9 +194,6 @@ let valid_path =
 
 let random_int32 = () => Random.int32(Int32.max_value);
 
-let exchange_table =
-  Hashtbl.create((module String), ~growth_allowed=true, ~size=500);
-
 let get_node_and_edges = (exchange, node_id) => {
   Hashtbl.(
     switch (find(exchange.topic_node, node_id)) {
@@ -232,7 +241,7 @@ let get_bindings_by_edge_id = (tbl, id: int32) => Hashtbl.find(tbl, id);
 let get_bindings_by_edge_id_exn = (tbl, id: int32) =>
   Hashtbl.find_exn(tbl, id);
 
-let add_exchange = name => {
+let add_exchange = (exchange_table, name) => {
   switch (Hashtbl.find(exchange_table, name)) {
   | Some(_exchange) => name
   | None =>
@@ -266,7 +275,7 @@ let add_exchange = name => {
   };
 };
 
-let subscribe = (exchange, ws: ws_connection, topic) => {
+let subscribe = (exchange, conn: connection, topic) => {
   open Hashtbl;
   let rec aux = (lst, edge) =>
     switch (lst) {
@@ -288,8 +297,8 @@ let subscribe = (exchange, ws: ws_connection, topic) => {
             find_exn(exchange.bindings, id),
             edge.id,
             fun
-            | Some(lst) => Some([ws.id, ...lst])
-            | None => Some([ws.id]),
+            | Some(lst) => Some([conn.id, ...lst])
+            | None => Some([conn.id]),
           );
         | None =>
           let new_edge = create_edge(id, hd);
@@ -307,8 +316,8 @@ let subscribe = (exchange, ws: ws_connection, topic) => {
             find_exn(exchange.bindings, id),
             new_edge.id,
             fun
-            | Some(lst) => Some([ws.id, ...lst])
-            | None => Some([ws.id]),
+            | Some(lst) => Some([conn.id, ...lst])
+            | None => Some([conn.id]),
           );
         };
       | None =>
@@ -329,7 +338,7 @@ let subscribe = (exchange, ws: ws_connection, topic) => {
         set(exchange.topic_edge, ~key=node.id, ~data=edge_hash);
         let binding_hash =
           Hashtbl.create((module Int32), ~growth_allowed=true);
-        set(binding_hash, ~key=new_edge.id, ~data=[ws.id]);
+        set(binding_hash, ~key=new_edge.id, ~data=[conn.id]);
         set(exchange.bindings, ~key=node.id, ~data=binding_hash);
       };
     | [hd, ...rest] =>
@@ -375,8 +384,8 @@ let subscribe = (exchange, ws: ws_connection, topic) => {
           find_exn(exchange.bindings, exchange.root_node),
           edge.id,
           fun
-          | Some(lst) => Some([ws.id, ...lst])
-          | None => Some([ws.id]),
+          | Some(lst) => Some([conn.id, ...lst])
+          | None => Some([conn.id]),
         );
       } else {
         aux(rest, edge);
@@ -399,8 +408,8 @@ let subscribe = (exchange, ws: ws_connection, topic) => {
           find_exn(exchange.bindings, exchange.root_node),
           edge.id,
           fun
-          | Some(lst) => Some([ws.id, ...lst])
-          | None => Some([ws.id]),
+          | Some(lst) => Some([conn.id, ...lst])
+          | None => Some([conn.id]),
         );
       } else {
         set(
@@ -414,7 +423,7 @@ let subscribe = (exchange, ws: ws_connection, topic) => {
   };
 };
 
-let unsubscribe = (exchange, ws: ws_connection, topic) => {
+let unsubscribe = (exchange, conn: connection, topic) => {
   open Hashtbl;
 
   let (node, edge) = get_leaf(exchange, topic);
@@ -426,7 +435,7 @@ let unsubscribe = (exchange, ws: ws_connection, topic) => {
     ~f=
       fun
       | None => None
-      | Some(lst) => Some(List.filter(lst, ~f=id => Int32.(id != ws.id))),
+      | Some(lst) => Some(List.filter(lst, ~f=id => Int32.(id != conn.id))),
   );
   let bindings_list =
     find_exn(find_exn(exchange.bindings, node.id), edge.id);
@@ -450,7 +459,7 @@ let unsubscribe = (exchange, ws: ws_connection, topic) => {
     binding_count: node.binding_count - 1,
   };
   set(exchange.topic_node, ~key=updated_node.id, ~data=updated_node);
-  let rec aux = (node: topic_node, edge, topic) => {
+  let rec aux = (node: topic_node, edge: topic_edge, topic) => {
     switch (topic) {
     | [] => ()
     | _lst =>
@@ -618,62 +627,3 @@ let publish = (exchange, (topic, msg)) => {
     Hashtbl.find_exn(exchange.connections, id).send(payload)
   );
 };
-
-let on_connect = ws => {
-  // on connect is when we create/add connection to an exchange
-  let exchange_name = add_exchange(get_exchange(ws.path));
-  let exchange = Hashtbl.find_exn(exchange_table, exchange_name);
-  Hashtbl.set(exchange.connections, ~key=ws.id, ~data=ws);
-  let topics = Hashtbl.create((module String), ~growth_allowed=true);
-  // on message is where we take care of subscibing connections to topics, publishing to topics, and unsubscribing to topics
-  let on_message = msg => {
-    switch (parse_msg(msg)) {
-    | Subscribe(topic) =>
-      switch (Hashtbl.find(topics, string_of_topic(topic))) {
-      | None =>
-        subscribe(exchange, ws, topic);
-        Hashtbl.set(topics, ~key=string_of_topic(topic), ~data=topic);
-      | Some(_) => ()
-      }
-    // TODO add validation to make sure this is a valid topic ie no # or *
-    | Publish(payload) => publish(exchange, payload)
-    | Unsubscribe(topic) =>
-      unsubscribe(exchange, ws, topic);
-      Hashtbl.remove(topics, string_of_topic(topic));
-    };
-  };
-  // on close is where we take care of clean-up task for the connection including unsubscribing to topics
-  let on_close = () => {
-    Hashtbl.iter(topics, ~f=topic => unsubscribe(exchange, ws, topic));
-    Hashtbl.remove(exchange.connections, ws.id);
-    /* check connections is empty and remove from exchange tabbl*/
-    switch (Hashtbl.is_empty(exchange.connections)) {
-    | false => ()
-    | true => Hashtbl.remove(exchange_table, exchange_name)
-    };
-  };
-
-  {Websocket_async.on_message, on_close};
-};
-
-let on_start = port => {
-  Logs.set_level(Some(Logs.App));
-  Logs.set_reporter(Logs_fmt.reporter());
-  print_endline(Util.hello());
-  print_endline(Util.running(port));
-};
-
-let socket_server = ((port, accepts), ()) =>
-  Http.create_socket_server(
-    ~port,
-    ~on_start,
-    ~max_accepts_per_batch=accepts,
-    ~check_request=
-      req =>
-        Deferred.return(
-          Websocket_async.upgrade_present(req.headers)
-          && Router.get_path(req)
-          |> valid_path,
-        ),
-    ~on_connect,
-  );
