@@ -52,18 +52,18 @@ type t('fd, 'io) = {
   response_body_buffer: Bigstringaf.t,
   request_handler: request_handler('fd, 'io),
   error_handler,
-  request_queue:
-    Queue.t(Reqd.t('fd, 'io)),
-    /* invariant: If [request_queue] is not empty, then the head of the queue
-       has already had [request_handler] called on it. */
-  wakeup_writer: ref(list(unit => unit)),
-  wakeup_reader:
-    ref(list(unit => unit)),
-    /* Represents an unrecoverable error that will cause the connection to
-     * shutdown. Holds on to the response body created by the error handler
-     * that might be streaming to the client. */
+  request_queue: Queue.t(Reqd.t('fd, 'io)),
+  /* invariant: If [request_queue] is not empty, then the head of the queue
+     has already had [request_handler] called on it. */
+  mutable wakeup_writer: unit => unit,
+  mutable wakeup_reader: unit => unit,
+  /* Represents an unrecoverable error that will cause the connection to
+   * shutdown. Holds on to the response body created by the error handler
+   * that might be streaming to the client. */
   mutable error_code: [ | `Ok | `Error(Body.t([ | `write]))],
 };
+
+let default_wakeup = Sys.opaque_identity(() => ());
 
 let is_closed = t =>
   Reader.is_closed(t.reader) && Writer.is_closed(t.writer);
@@ -74,45 +74,48 @@ let is_active = t => !Queue.is_empty(t.request_queue);
 
 let current_reqd_exn = t => Queue.peek(t.request_queue);
 
-let on_wakeup_reader = (t, k) =>
+let yield_reader = (t, k) =>
   if (is_closed(t)) {
     failwith("on_wakeup_reader on closed conn");
+  } else if (!(t.wakeup_reader === default_wakeup)) {
+    failwith("yield_reader: only one callback can be registered at a time");
   } else {
-    t.wakeup_reader := [k, ...t.wakeup_reader^];
+    t.wakeup_reader = k;
   };
+
+let wakeup_reader = t => {
+  let f = t.wakeup_reader;
+  t.wakeup_reader = default_wakeup;
+  f();
+};
 
 let on_wakeup_writer = (t, k) =>
   if (is_closed(t)) {
     failwith("on_wakeup_writer on closed conn");
+  } else if (!(t.wakeup_writer === default_wakeup)) {
+    failwith("yield_writer: only one callback can be registered at a time");
   } else {
-    t.wakeup_writer := [k, ...t.wakeup_writer^];
+    t.wakeup_writer = k;
   };
 
 let wakeup_writer = t => {
-  let fs = t.wakeup_writer^;
-  t.wakeup_writer := [];
-  List.iter(f => f(), fs);
+  let f = t.wakeup_writer;
+  t.wakeup_writer = default_wakeup;
+  f();
 };
 
-let rec _transfer_writer_callbacks = (fs, reqd) =>
-  switch (fs) {
-  | [] => ()
-  | [f, ...fs] =>
+let transfer_writer_callback = (t, reqd) =>
+  /* Note: it's important that we don't call `Reqd.on_more_output_available` if
+   * no `wakeup_writer` callback has been registered. In the current
+   * implementation, `Reqd` performs its own bookkeeping by performing its own
+   * physical equality check. If `Server_connection` registers its dummy
+   * callback, `Reqd`'s physical equality check with _its own_ dummy callback
+   * will fail and cause weird bugs. */
+  if (!(t.wakeup_writer === default_wakeup)) {
+    let f = t.wakeup_writer;
+    t.wakeup_writer = default_wakeup;
     Reqd.on_more_output_available(reqd, f);
-    _transfer_writer_callbacks(fs, reqd);
   };
-
-let transfer_writer_callbacks = (t, reqd) => {
-  let fs = t.wakeup_writer^;
-  t.wakeup_writer := [];
-  _transfer_writer_callbacks(fs, reqd);
-};
-
-let wakeup_reader = t => {
-  let fs = t.wakeup_reader^;
-  t.wakeup_reader := [];
-  List.iter(f => f(), fs);
-};
 
 let default_error_handler = (~request as _=?, error, handle) => {
   let message =
@@ -158,8 +161,8 @@ let create =
     request_handler,
     error_handler,
     request_queue,
-    wakeup_writer: ref([]),
-    wakeup_reader: ref([]),
+    wakeup_writer: default_wakeup,
+    wakeup_reader: default_wakeup,
     error_code: `Ok,
   };
 };
@@ -261,7 +264,9 @@ let advance_request_queue_if_necessary = t =>
     /* Don't tear down the whole connection if we saw an unrecoverable parsing
      * error, as we might be in the process of streaming back the error
      * response body to the client. */
-    shutdown_reader(t);
+    shutdown_reader(
+      t,
+    );
   } else if (Reader.is_closed(t.reader)) {
     shutdown(t);
   };
@@ -309,7 +314,7 @@ let read_with_more = (t, bs, ~off, ~len, more) => {
   if (is_active(t)) {
     let reqd = current_reqd_exn(t);
     if (call_handler) {
-      transfer_writer_callbacks(t, reqd);
+      transfer_writer_callback(t, reqd);
       t.request_handler(reqd);
     };
     Reqd.flush_request_body(reqd);
@@ -323,7 +328,11 @@ let read = (t, bs, ~off, ~len) =>
 let read_eof = (t, bs, ~off, ~len) =>
   read_with_more(t, bs, ~off, ~len, Complete);
 
-let yield_reader = (t, k) => on_wakeup_reader(t, k);
+let flush_response_body = t =>
+  if (is_active(t)) {
+    let reqd = current_reqd_exn(t);
+    Reqd.flush_response_body(reqd);
+  };
 
 let next_write_operation = t => {
   advance_request_queue_if_necessary(t);

@@ -252,7 +252,7 @@ module Unix_io:
             | `Closed => return(`Eof)
             | `Ready => go(fd, buffer)
           )
-        | `Error([@implicit_arity] Unix.Unix_error(EBADF, _, _)) =>
+        | `Error(Unix.Unix_error(EBADF, _, _)) =>
           badfd(fd)
         | `Error(exn) =>
           Deferred.don't_wait_for(Fd.close(fd));

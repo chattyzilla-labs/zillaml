@@ -2,8 +2,11 @@
  * Important! do not interact with the global hashtables outside of on_connect, on_message, and on_close
  * so that all operations remain thread safe. To test if the current runnning thread is holding the async lock
  * you can run Thread_safe.am_holding_async_lock(). It will return true if you are currently runningin the context of the async event loop
+ *
  * This application works as a finite state machine so you will notice a lot of unsafe hash tbl operations
  * because the logic assumes the existence of data in some hashtbls. The state of the application would otherwise be invalid if the operations threw an exception
+ *
+ * TODO: refactor core code into module, abstract away connection so it is not coupled to a ws connection so this code can be reused for pubsub client snapshots,
  */
 open Core;
 open Async;
@@ -127,7 +130,9 @@ module Topic_Parser = {
     fun
     | '.' => true
     | _ => false;
+
   let dot = skip_while(is_dot);
+
   let word =
     take_while1(
       fun
@@ -375,7 +380,7 @@ let subscribe = (exchange, ws: ws_connection, topic) => {
         );
       } else {
         aux(rest, edge);
-      }
+      };
 
     | None =>
       let edge = create_edge(exchange.root_node, hd);
