@@ -1,6 +1,6 @@
 open Core;
 open Async;
-open Zillaml_async;
+
 open Zillaml_httpkit_async.Server;
 open Websocket_async;
 
@@ -11,8 +11,7 @@ let exchange_table =
 
 let on_connect = ws => {
   // on connect is when we create/add connection to an exchange
-  let exchange_name = add_exchange(exchange_table, get_exchange(ws.path));
-  let exchange = Hashtbl.find_exn(exchange_table, exchange_name);
+  let exchange = add_exchange(exchange_table, get_exchange(ws.path));
   let conn = create_conn_from_ws(ws);
   Hashtbl.set(exchange.connections, ~key=conn.id, ~data=conn);
   let topics = Hashtbl.create((module String), ~growth_allowed=true);
@@ -40,7 +39,7 @@ let on_connect = ws => {
     /* check connections is empty and remove from exchange tabbl*/
     switch (Hashtbl.is_empty(exchange.connections)) {
     | false => ()
-    | true => Hashtbl.remove(exchange_table, exchange_name)
+    | true => Hashtbl.remove(exchange_table, exchange.name)
     };
   };
 

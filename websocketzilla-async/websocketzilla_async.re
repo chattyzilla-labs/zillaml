@@ -1,3 +1,4 @@
+/* TODO add ssl suppor*/
 open Core;
 open Async;
 
@@ -68,7 +69,7 @@ let read = (fd, buffer) => {
       | `Already_closed
       | `Ok(0) => return(`Eof)
       | `Ok(n) => return(`Ok(n))
-      | `Error([@implicit_arity] Unix.Unix_error(EWOULDBLOCK | EAGAIN, _, _)) =>
+      | `Error(Unix.Unix_error(EWOULDBLOCK | EAGAIN, _, _)) =>
         Fd.ready_to(fd, `Read)
         >>= (
           fun
@@ -76,7 +77,7 @@ let read = (fd, buffer) => {
           | `Closed => return(`Eof)
           | `Ready => go(fd, buffer)
         )
-      | `Error([@implicit_arity] Unix.Unix_error(EBADF, _, _)) => badfd(fd)
+      | `Error(Unix.Unix_error(EBADF, _, _)) => badfd(fd)
       | `Error(exn) =>
         Deferred.don't_wait_for(Fd.close(fd));
         raise(exn);

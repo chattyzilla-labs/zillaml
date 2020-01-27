@@ -10,8 +10,6 @@
  * subscription/unsubscribe and publishing confirmations, retry sending msgs if no confirmation by subscription
  */
 open Core;
-open Async;
-open Zillaml_async;
 open Zillaml_httpkit_async.Server;
 open Websocket_async;
 open Yojson;
@@ -75,6 +73,8 @@ type connection = {
  */
 
 type exchange = {
+  name: string,
+
   root_node: int32,
   /**
    * hash map that links node id to topic node
@@ -241,37 +241,47 @@ let get_bindings_by_edge_id = (tbl, id: int32) => Hashtbl.find(tbl, id);
 let get_bindings_by_edge_id_exn = (tbl, id: int32) =>
   Hashtbl.find_exn(tbl, id);
 
+let create_exchange = (name) => {
+  let root_node_id = random_int32();
+  let root = create_node(root_node_id);
+  let topic_node =
+    Hashtbl.create((module Int32), ~growth_allowed=true, ~size=500);
+  Hashtbl.set(topic_node, ~key=root_node_id, ~data=root);
+   let data = {
+     name,
+     root_node: root_node_id,
+     topic_node,
+     topic_edge:
+       Hashtbl.create((module Int32), ~growth_allowed=true, ~size=1000),
+     bindings: Hashtbl.create((module Int32), ~growth_allowed=true, ~size=500),
+     connections:
+       Hashtbl.create((module Int32), ~growth_allowed=true, ~size=500),
+   };
+   Hashtbl.set(
+     data.topic_edge,
+     ~key=root.id,
+     ~data=Hashtbl.create((module String), ~growth_allowed=true),
+   );
+   Hashtbl.set(
+     data.bindings,
+     ~key=root.id,
+     ~data=Hashtbl.create((module Int32), ~growth_allowed=true),
+   );
+   data;
+};
+
 let add_exchange = (exchange_table, name) => {
   switch (Hashtbl.find(exchange_table, name)) {
-  | Some(_exchange) => name
+  | Some(exchange) => exchange
   | None =>
     let root_node_id = random_int32();
     let root = create_node(root_node_id);
     let topic_node =
       Hashtbl.create((module Int32), ~growth_allowed=true, ~size=500);
     Hashtbl.set(topic_node, ~key=root_node_id, ~data=root);
-    let data = {
-      root_node: root_node_id,
-      topic_node,
-      topic_edge:
-        Hashtbl.create((module Int32), ~growth_allowed=true, ~size=1000),
-      bindings:
-        Hashtbl.create((module Int32), ~growth_allowed=true, ~size=500),
-      connections:
-        Hashtbl.create((module Int32), ~growth_allowed=true, ~size=500),
-    };
-    Hashtbl.set(
-      data.topic_edge,
-      ~key=root.id,
-      ~data=Hashtbl.create((module String), ~growth_allowed=true),
-    );
-    Hashtbl.set(
-      data.bindings,
-      ~key=root.id,
-      ~data=Hashtbl.create((module Int32), ~growth_allowed=true),
-    );
+    let data = create_exchange(name);
     Hashtbl.set(exchange_table, ~key=name, ~data);
-    name;
+    data;
   };
 };
 

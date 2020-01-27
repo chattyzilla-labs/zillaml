@@ -8,11 +8,11 @@ module Wsd: {
   let create: mode => t;
 
   let schedule:
-    (t, ~kind: [ | `Text | `Binary], Bigstringaf.t, ~off: int, ~len: int) =>
+    (t, ~kind: [ | `Text | `Binary | `Continuation ], Bigstringaf.t, ~off: int, ~len: int) =>
     unit;
 
   let send_bytes:
-    (t, ~kind: [ | `Text | `Binary], Bytes.t, ~off: int, ~len: int) => unit;
+    (t, ~kind: [ | `Text | `Binary | `Continuation ], Bytes.t, ~off: int, ~len: int) => unit;
 
   let send_ping: t => unit;
   let send_pong: t => unit;
