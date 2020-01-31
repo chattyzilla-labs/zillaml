@@ -10,8 +10,6 @@
  * subscription/unsubscribe and publishing confirmations, retry sending msgs if no confirmation by subscription
  */
 open Core;
-open Zillaml_httpkit_async.Server;
-open Websocket_async;
 open Yojson;
 open Yojson.Basic.Util;
 
@@ -27,7 +25,6 @@ type action =
   | Subscribe(topic)
   | Unsubscribe(topic);
 
-// TODO: set up so code takes advantage of phantom types for all the ids
 type topic_node = {
   id: int32,
   edge_count: int,
@@ -47,10 +44,16 @@ type topic_edge = {
 // send on client side would be a callback onMessage function implemented by a subscription
 type connection = {
   id: int32,
-  send: string => unit
+  exchange_name: string,
+  send: [ | `Message(topic, string)] => unit,
 };
 
+type connection_handler = {
+  on_action: action => unit,
+  on_close: unit => unit,
+};
 /**
+ *
  *  conceptually the group of hashes that make up an exchange represents a tree
  *  ( e(w) / ) reps a topic_edge of word w,
  *  (_) represents no next node <edge.child == None>,
@@ -71,10 +74,8 @@ type connection = {
  *  This was chosen with performance of application, and application metrics code in mind.
  *  Also for flexibility in gathering metrics.
  */
-
 type exchange = {
   name: string,
-
   root_node: int32,
   /**
    * hash map that links node id to topic node
@@ -98,6 +99,11 @@ type exchange = {
   connections: Core.Hashtbl.t(int32, connection),
 };
 
+type broker = {
+  exchange_table: Core.Hashtbl.t(string, exchange),
+  on_connect: connection => connection_handler,
+};
+
 let random_int32 = () => Random.int32(Int32.max_value);
 
 let create_node = (~edge_count=0, ~binding_count=0, id) => {
@@ -113,7 +119,7 @@ let create_edge = (~child=None, parent, word) => {
   word,
 };
 
-let create_conn_from_ws = (ws: ws_connection) => {id: ws.id, send: ws.send};
+let create_conn = (id, send, exchange_name) => {id, send, exchange_name};
 
 let string_of_word =
   fun
@@ -227,6 +233,26 @@ let get_leaf = (exchange, topic) => {
     };
   aux(topic, find_exn(exchange.topic_node, exchange.root_node));
 };
+let get_leaf = (exchange, topic) => {
+  open Hashtbl;
+  let rec aux = (topic', node: topic_node) =>
+    switch (topic') {
+    | [] => failwith("we should not get an empty topic list")
+    | [hd, ...rest] =>
+      let edge =
+        find_exn(
+          find_exn(exchange.topic_edge, node.id),
+          string_of_word(hd),
+        );
+      List.is_empty(rest)
+        ? (node, edge)
+        : {
+          let child_id = Option.value_exn(edge.child);
+          aux(rest, find_exn(exchange.topic_node, child_id));
+        };
+    };
+  aux(topic, find_exn(exchange.topic_node, exchange.root_node));
+};
 
 let get_edge_by_word = (tbl, word: string) => Hashtbl.find(tbl, word);
 
@@ -241,33 +267,33 @@ let get_bindings_by_edge_id = (tbl, id: int32) => Hashtbl.find(tbl, id);
 let get_bindings_by_edge_id_exn = (tbl, id: int32) =>
   Hashtbl.find_exn(tbl, id);
 
-let create_exchange = (name) => {
+let create_exchange = name => {
   let root_node_id = random_int32();
   let root = create_node(root_node_id);
   let topic_node =
     Hashtbl.create((module Int32), ~growth_allowed=true, ~size=500);
   Hashtbl.set(topic_node, ~key=root_node_id, ~data=root);
-   let data = {
-     name,
-     root_node: root_node_id,
-     topic_node,
-     topic_edge:
-       Hashtbl.create((module Int32), ~growth_allowed=true, ~size=1000),
-     bindings: Hashtbl.create((module Int32), ~growth_allowed=true, ~size=500),
-     connections:
-       Hashtbl.create((module Int32), ~growth_allowed=true, ~size=500),
-   };
-   Hashtbl.set(
-     data.topic_edge,
-     ~key=root.id,
-     ~data=Hashtbl.create((module String), ~growth_allowed=true),
-   );
-   Hashtbl.set(
-     data.bindings,
-     ~key=root.id,
-     ~data=Hashtbl.create((module Int32), ~growth_allowed=true),
-   );
-   data;
+  let data = {
+    name,
+    root_node: root_node_id,
+    topic_node,
+    topic_edge:
+      Hashtbl.create((module Int32), ~growth_allowed=true, ~size=1000),
+    bindings: Hashtbl.create((module Int32), ~growth_allowed=true, ~size=500),
+    connections:
+      Hashtbl.create((module Int32), ~growth_allowed=true, ~size=500),
+  };
+  Hashtbl.set(
+    data.topic_edge,
+    ~key=root.id,
+    ~data=Hashtbl.create((module String), ~growth_allowed=true),
+  );
+  Hashtbl.set(
+    data.bindings,
+    ~key=root.id,
+    ~data=Hashtbl.create((module Int32), ~growth_allowed=true),
+  );
+  data;
 };
 
 let add_exchange = (exchange_table, name) => {
@@ -399,7 +425,7 @@ let subscribe = (exchange, conn: connection, topic) => {
         );
       } else {
         aux(rest, edge);
-      };
+      }
 
     | None =>
       let edge = create_edge(exchange.root_node, hd);
@@ -529,7 +555,7 @@ let unsubscribe = (exchange, conn: connection, topic) => {
   };
 };
 
-let publish = (exchange, (topic, msg)) => {
+let publish = (exchange, sender, `Message(topic, msg) as payload) => {
   let edges_to_ids = edges =>
     List.map(edges, ((node_id, edge_id)) =>
       get_bindings_by_edge_id_exn(
@@ -624,16 +650,50 @@ let publish = (exchange, (topic, msg)) => {
           aux(rest, nodes, List.unordered_append(edges, newedges));
         }
     };
-  let payload =
-    Printf.sprintf(
-      "{\"topic\": \"%s\", \"payload\": \"%s\"}",
-      string_of_topic(topic),
-      msg,
-    );
   List.iter(
     aux(topic, [exchange.root_node], [])
     |> List.dedup_and_sort(~compare=Int32.compare),
     id =>
-    Hashtbl.find_exn(exchange.connections, id).send(payload)
+    Int32.equal(id, sender)
+      ? () : Hashtbl.find_exn(exchange.connections, id).send(payload)
   );
+};
+
+let create_broker = () => {
+  let exchange_table =
+    Hashtbl.create((module String), ~growth_allowed=true, ~size=500);
+
+  let on_connect = conn => {
+    let exchange = add_exchange(exchange_table, conn.exchange_name);
+    Hashtbl.set(exchange.connections, ~key=conn.id, ~data=conn);
+    let topics = Hashtbl.create((module String), ~growth_allowed=true);
+    let on_action = action => {
+      switch (action) {
+      | Subscribe(topic) =>
+        switch (Hashtbl.find(topics, string_of_topic(topic))) {
+        | None =>
+          subscribe(exchange, conn, topic);
+          Hashtbl.set(topics, ~key=string_of_topic(topic), ~data=topic);
+        | Some(_) => ()
+        }
+
+      | Publish(payload) => publish(exchange, conn.id, `Message(payload))
+      | Unsubscribe(topic) =>
+        unsubscribe(exchange, conn, topic);
+        Hashtbl.remove(topics, string_of_topic(topic));
+      };
+    };
+
+    let on_close = () => {
+      Hashtbl.iter(topics, ~f=topic => unsubscribe(exchange, conn, topic));
+      Hashtbl.remove(exchange.connections, conn.id);
+      switch (Hashtbl.is_empty(exchange.connections)) {
+      | false => ()
+      | true => Hashtbl.remove(exchange_table, exchange.name)
+      };
+    };
+
+    {on_action, on_close};
+  };
+  {exchange_table, on_connect};
 };

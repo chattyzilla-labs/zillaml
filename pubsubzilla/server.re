@@ -4,48 +4,6 @@ open Async;
 open Zillaml_httpkit_async.Server;
 open Websocket_async;
 
-open Pubsub;
-
-let exchange_table =
-  Hashtbl.create((module String), ~growth_allowed=true, ~size=500);
-
-let on_connect = ws => {
-  // on connect is when we create/add connection to an exchange
-  let exchange = add_exchange(exchange_table, get_exchange(ws.path));
-  let conn = create_conn_from_ws(ws);
-  Hashtbl.set(exchange.connections, ~key=conn.id, ~data=conn);
-  let topics = Hashtbl.create((module String), ~growth_allowed=true);
-  // on message is where we take care of subscibing connections to topics, publishing to topics, and unsubscribing to topics
-  let on_message = msg => {
-    switch (parse_msg(msg)) {
-    | Subscribe(topic) =>
-      switch (Hashtbl.find(topics, string_of_topic(topic))) {
-      | None =>
-        subscribe(exchange, conn, topic);
-        Hashtbl.set(topics, ~key=string_of_topic(topic), ~data=topic);
-      | Some(_) => ()
-      }
-    // TODO add validation to make sure this is a valid topic ie no # or *
-    | Publish(payload) => publish(exchange, payload)
-    | Unsubscribe(topic) =>
-      unsubscribe(exchange, conn, topic);
-      Hashtbl.remove(topics, string_of_topic(topic));
-    };
-  };
-  // on close is where we take care of clean-up task for the connection including unsubscribing to topics
-  let on_close = () => {
-    Hashtbl.iter(topics, ~f=topic => unsubscribe(exchange, conn, topic));
-    Hashtbl.remove(exchange.connections, conn.id);
-    /* check connections is empty and remove from exchange tabbl*/
-    switch (Hashtbl.is_empty(exchange.connections)) {
-    | false => ()
-    | true => Hashtbl.remove(exchange_table, exchange.name)
-    };
-  };
-
-  {Websocket_async.on_message, on_close};
-};
-
 let on_start = port => {
   Logs.set_level(Some(Logs.App));
   Logs.set_reporter(Logs_fmt.reporter());
@@ -53,7 +11,22 @@ let on_start = port => {
   print_endline(Util.running(port));
 };
 
-let socket_server = ((port, accepts), ()) =>
+let socket_server = ((port, accepts), ()) => {
+  let { Pubsub.exchange_table, on_connect } = Pubsub.create_broker();
+  let on_connect = ws => {
+    let send = (`Message(topic, msg)) => {
+      let payload =
+        Printf.sprintf(
+          "{\"topic\": \"%s\", \"payload\": \"%s\"}",
+          Pubsub.string_of_topic(topic),
+          msg,
+        );
+      ws.send(payload);
+    };
+    let conn = Pubsub.create_conn(ws.id, send, Pubsub.get_exchange(ws.path));
+    let {Pubsub.on_action, on_close} = on_connect(conn);
+    {Websocket_async.on_message: msg => on_action(Pubsub.parse_msg(msg)), on_close};
+  };
   Http.create_socket_server(
     ~port,
     ~on_start,
@@ -63,7 +36,8 @@ let socket_server = ((port, accepts), ()) =>
         Deferred.return(
           Websocket_async.upgrade_present(req.headers)
           && Router.get_path(req)
-          |> valid_path,
+          |> Pubsub.valid_path,
         ),
     ~on_connect,
   );
+}

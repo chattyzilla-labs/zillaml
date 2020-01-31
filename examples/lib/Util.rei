@@ -8,3 +8,4 @@
     let hello: (unit) => string;
 
     let running: (~host: string=?, int) => string;
+    let print_statement: (string, string) => string;
