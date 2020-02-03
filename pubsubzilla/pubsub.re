@@ -160,14 +160,14 @@ module Topic_Parser = {
     >>| str_to_word
     <* dot;
 
-  let extract_topic = {
+  let extract_topic' = {
     let rec go = acc =>
       lift(x => [x, ...acc], word) >>= go <|> return(acc |> List.rev);
     word >>= (init => go([init]));
   };
 
   let extract_topic = str =>
-    switch (parse_string(extract_topic, str)) {
+    switch (parse_string(extract_topic', str)) {
     | Ok(v) => v
     | Error(msg) => failwith(msg)
     };
@@ -233,7 +233,7 @@ let get_leaf = (exchange, topic) => {
     };
   aux(topic, find_exn(exchange.topic_node, exchange.root_node));
 };
-let get_leaf = (exchange, topic) => {
+let get_leaf_exn = (exchange, topic) => {
   open Hashtbl;
   let rec aux = (topic', node: topic_node) =>
     switch (topic') {

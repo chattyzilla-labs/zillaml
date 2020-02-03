@@ -1,8 +1,19 @@
 {
   "name": "zillaml",
-  "version": "0.1.0",
-  "description": "A high-performance, memory-efficient, and scalable web server for Reason/OCaml",
+  "version": "0.2.0",
+  "description": "Mono Repo with tools for Server Side development in Reason/OCaml: A high-performance, memory-efficient, and scalable web server for Reason/OCaml; Higher level abstractions for building cleaner REST apis; Websocket support; RPC Support; Pubsub client and server; Example Implementations;",
   "license": "BSD-3-clause",
+  "keywords": [
+    "ReasonMl",
+    "Reason",
+    "Ocaml",
+    "web server",
+    "websocket",
+    "pubsub",
+    "rpc",
+    "esy",
+    "functional"
+  ],
   "notes-ctd": [
     "This is how you make an esy monorepo for development, but then release the monorepo as many individual packages:",
     "1. Create a packageName-dev esy.json at the root and list the sum of all dependencies",
@@ -11,6 +22,10 @@
     "4. Create separate esy.json files for each of those packages (see ./scripts/esy/)",
     "5. Copy ./scripts/esy-prepublish.js in to your repo and change packages= to your set of packages."
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dakotamurphyucf/zillaml.git"
+  },
   "esy": {
     "build": [
       ["dune", "build", "-p", "zillaml,zillaml-async,zillaml-httpkit-async,zillaml-httpkit,websocketzilla,websocketzilla-async,persistent-connection"]
@@ -32,7 +47,7 @@
     "release": {
       "bin": [],
       "includePackages": [
-        "root",
+       "root",
        "@opam/angstrom",
        "@opam/astring",
        "@opam/async",
@@ -55,7 +70,11 @@
        "@opam/uri",
        "@opam/ssl",
        "@opam/yojson",
-        "ocaml"
+       "ocaml",
+       "@reason-native/console",
+       "@reason-native/pastel",
+       "@reason-native/rely",
+       "@opam/textutils"
       ],
       "rewritePrefix": true
     }
@@ -64,15 +83,15 @@
    "@esy-ocaml/reason": ">= 3.4.0 < 3.6.0",
    "@opam/angstrom": "0.12.1",
    "@opam/astring": "*",
-   "@opam/async": "*",
-   "@opam/async_ssl": "*",
+   "@opam/async": "v0.13.0",
+   "@opam/async_ssl": "v0.13.0",
    "@opam/base64": "3.2.0",
    "@opam/bigstringaf": "0.6.0",
    "@opam/caqti": "*",
    "@opam/caqti-async": "*",
    "@opam/caqti-driver-postgresql": "*",
    "@opam/conduit": "*",
-   "@opam/core": "*",
+   "@opam/core": "v0.13.0",
    "@opam/digestif": "0.8.0",
    "@opam/dune": "*",
    "@opam/faraday": "0.7.0",
@@ -81,25 +100,24 @@
    "@opam/fmt": "*",
    "@opam/logs": "*",
    "@opam/ocplib-endian": "*",
-   "@opam/ppx_jane": "*",
+   "@opam/ppx_jane": "v0.13.0",
    "@opam/uri": "*",
-    "@opam/yojson": "*",
+   "@opam/yojson": "*",
    "@reason-native/console": "*",
    "@reason-native/pastel": "*",
    "@reason-native/rely": "*",
    "ocaml": "~4.8.0",
    "refmterr": "*",
-  "@opam/ssl": ">= 0.5.8"
+  "@opam/ssl": ">= 0.5.8",
+  "@opam/textutils": "*"
   },
   "resolutions": {
     "@opam/async": "v0.13.0",
     "@opam/core": "v0.13.0",
     "@opam/base": "v0.13.0",
     "@opam/ppx_jane": "v0.13.0",
-    "@opam/async_ssl": "janestreet/async_ssl:async_ssl.opam#ae6cd21",
-    "@opam/ctypes": "dakotamurphyucf/ctypes:ctypes.opam#66aa571",
-    "@opam/ctypes-foreign": "dakotamurphyucf/ctypes:ctypes-foreign.opam#66aa571",
-    "@opam/conf-libssl": "esy-packages/esy-openssl#860ad7f"
+    "@opam/async_ssl": "v0.13.0",
+    "@opam/conf-libssl": "esy-packages/esy-openssl#648930f"
   },
   "devDependencies": {
     "@opam/merlin": "*",

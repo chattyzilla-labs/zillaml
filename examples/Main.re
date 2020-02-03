@@ -121,6 +121,8 @@ let () =
           ),
         ),
         ~f=((server_flags, is_server), ()) => {
+        Mlib.Util.print_statement("expected", "1167")  |> print_endline;
+        Mlib.Challange.smallest_sum([2,3,6,7,5,8,10,15,3,6,9,2,1,8,2,5,8,3,15,5,6]) |> string_of_int |> Mlib.Util.print_statement("output") |> print_endline;
         is_server
           // let%bind () = testServer()
           // Mlib.Server.server(server_flags, ());

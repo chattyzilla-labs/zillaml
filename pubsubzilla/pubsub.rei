@@ -65,6 +65,7 @@ module Topic_Parser: {
   let is_dot: char => bool;
   let dot: Angstrom.t(unit);
   let word: Angstrom.t(word);
+  let extract_topic': Angstrom.t(list(word));
   let extract_topic: string => list(word);
 };
 
@@ -108,3 +109,8 @@ let unsubscribe: (exchange, connection, list(word)) => unit;
 let publish: (exchange, Core.Int32.t, [< | `Message(topic, string)]) => unit;
 
 let create_broker: unit => broker;
+
+let get_leaf_exn: (exchange, list(word)) => (
+  topic_node,
+  topic_edge
+)
