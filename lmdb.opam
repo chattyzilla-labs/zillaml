@@ -1,0 +1,29 @@
+opam-version: "2.0"
+synopsis: "Bindings for LMDB, a fast in-file database with ACID transactions"
+license: "MIT"
+tags: [ "clib:lmdb" "database" ]
+build: [
+  ["dune" "subst"] {pinned}
+  ["dune" "build" "-p" name "-j" jobs]
+  ["dune" "runtest" "-p" name "-j" jobs] {with-test}
+]
+depends: [
+  "ocaml" {>= "4.03"}
+  "bigstringaf"
+  "dune" {build}
+  "alcotest" {with-test}
+  "benchmark" {with-test}
+  "odoc" {with-doc}
+]
+
+depexts: [
+  ["liblmdb-dev"] {os-distribution = "debian"}
+  ["liblmdb-dev"] {os-distribution = "ubuntu"}
+  ["lmdb"] {os = "macos" & os-distribution = "homebrew"}
+  ["lmdb"] {os = "macos" & os-distribution = "macports"}
+  ["lmdb-devel"] {os-distribution = "centos"}
+  ["lmdb-devel"] {os-distribution = "fedora"}
+  ["lmdb-devel"] {os-distribution = "opensuse"}
+  ["lmdb"] {os-distribution = "alpine"}
+  ["lmdb"] {os-distribution = "archlinux"}
+]
