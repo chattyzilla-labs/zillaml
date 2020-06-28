@@ -20,6 +20,7 @@ let or_error = m =>
 
 let run_query = value => Caqti_async.Pool.use(value, pool) |> or_error;
 let add_org_query_string = "INSERT INTO organization_vault.organization (name, domain, email) VALUES ($1, $2, $3) RETURNING id, name, domain, email";
+
 let add_org_query =
   Caqti_request.find(
     Caqti_type.(tup3(string, string, string)),

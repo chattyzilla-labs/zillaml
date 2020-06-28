@@ -70,4 +70,16 @@ let server = ((port, accepts), ()) => Http.create_server(
     ~reqlogger=Some(Common.req_logger)
 );
 
-let pubsub_server = Pubsubzilla.Server.socket_server;
+module Message = {
+  [@deriving (sexp, bin_io, compare)]
+  type t = {
+    text: string,
+    sender: string
+  };
+};
+
+module MessageTopicRouterExchange = Pubsubzilla.Exchange.TopicRouterExchange(Message);
+
+module MessageTopicServer = Pubsubzilla.Exchange.MakeExchange(MessageTopicRouterExchange);
+
+// let pubsub_server = Pubsubzilla.Server.socket_server;

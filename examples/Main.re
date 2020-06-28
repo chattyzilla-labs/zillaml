@@ -103,6 +103,7 @@ let () =
       map(
         both(
           both(
+          both(
             flag(
               "-p",
               optional_with_default(8000, int),
@@ -114,16 +115,77 @@ let () =
               ~doc="int Maximum accepts per batch",
             ),
           ),
-          flag(
+          both(
+            flag(
             "-server",
             optional_with_default(true, bool),
             ~doc="is server or client",
           ),
+          flag(
+            "-subscriber",
+            optional_with_default(true, bool),
+            ~doc="is client subscriber",
+          ),
+          )
         ),
-        ~f=((server_flags, is_server), ()) => {
-        Mlib.Util.print_statement("expected", "1167")  |> print_endline;
-        Mlib.Challange.smallest_sum([2,3,6,7,5,8,10,15,3,6,9,2,1,8,2,5,8,3,15,5,6]) |> string_of_int |> Mlib.Util.print_statement("output") |> print_endline;
-        is_server
+        flag(
+            "-text",
+            optional_with_default("what's good bro", string),
+            ~doc="text to publish to directory",
+          ),
+        ),
+        ~f=(((_, (is_server, is_subscriber)), text), ()) => {
+          // Mlib.Util.print_statement("expected", "1167")  |> print_endline;
+          // Mlib.Challange.smallest_sum([2,3,6,7,5,8,10,15,3,6,9,2,1,8,2,5,8,3,15,5,6]) |> string_of_int |> Mlib.Util.print_statement("output") |> print_endline;
+          open Mlib.Server.MessageTopicServer;
+          if ( is_server ) {
+            let _a = Server.server(~port=5000);
+            Deferred.never();
+          } else if (is_subscriber) {
+            let%bind conn =
+              Client.get_connection(
+                ~host="localhost",
+                ~port=5000,
+              );
+            switch%bind (
+              Client.subscribe(
+                ~connection=conn,
+                ~topic=[
+                  Word("dakota"),
+                  Word("messages"),
+                ],
+              )
+            ) {
+            | Error(_) => Deferred.return()
+            | Ok(pipe) =>
+              Pipe.iter(
+                pipe,
+                ~f=msg => {
+                  let time = Time.now();
+                  printf("%s: %s\n", Time.to_string(time), msg.text);
+                  //  printf("%s%s\n%!", clear_string, msg.text);
+                  //  printf("%s%s\n%!", clear_string, msg.sender);
+                  Deferred.return();
+                },
+              )
+            };
+          } else {
+            let%bind conn =
+              Client.get_connection(
+                ~host="localhost",
+                ~port=5000,
+              );
+            let time = Time.now();
+            printf("message sent at: %s\n", Time.to_string(time));
+            Client.publish(
+              ~connection=conn,
+              ~topic=[
+                Word("dakota"),
+                Word("messages"),
+              ],
+              ~message={text, sender: "the main file!!!!!"},
+            );
+          }
           // let%bind () = testServer()
           // Mlib.Server.server(server_flags, ());
           // let%bind result = Lib.Db.add_org("apple", "apple.com", "apple@apple.com")
@@ -134,8 +196,9 @@ let () =
           // };
           // };
           // Mlib.Server.socket_server(server_flags, ());
-          ? Mlib.Server.pubsub_server(server_flags, ()) : testClient()
+          // ? Mlib.Server.pubsub_server(server_flags, ()) : testClient()
       })
+
     ),
   )
   |> Command.run;

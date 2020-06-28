@@ -1,6 +1,5 @@
 open Core;
 open Async;
-
 /* The implementation of the "hello" RPC.  The first argument is the environment
       the query executes against, which in this case is trivial.
 

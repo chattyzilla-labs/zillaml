@@ -9,6 +9,13 @@
  * TODO: refactor core code into module, abstract away connection so it is not coupled to a ws connection so this code can be reused for pubsub client, snapshots,
  * subscription/unsubscribe and publishing confirmations, retry sending msgs if no confirmation by subscription
  */
+
+/**
+ * !!!IMPORTANT!!! this was a cool first try at a pubsub service. But I completely over-engineered the implementation.
+ *  I reccommend using the topic server in Exchange.re simpler implemetation with more robust connection logic 
+ *  and in buit data serialization made to order by taking advantage of functor modules
+ * 
+ */
 open Core;
 open Yojson;
 open Yojson.Basic.Util;
