@@ -12,7 +12,7 @@ A [simple example](tests/simple_db.re).
 ```reason
 open Lmdb
 let env = Env.create("mydb")
-let db = Db.create(~create:true env "Camelidae")
+let db = Db.create(~create=true, env, "Camelidae")
 Db.put(db, "Bactrian camel", "Elegant and beautiful animal with two humps.")
 ```
 

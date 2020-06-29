@@ -92,7 +92,7 @@ let read = (fd, buffer) => {
           Buffer.put(buffer, ~f=(bigstring, ~off, ~len) =>
             Unix.Syscall_result.Int.ok_or_unix_error_exn(
               ~syscall_name="read",
-              Bigstring.read_assume_fd_is_nonblocking(
+              Bigstring_unix.read_assume_fd_is_nonblocking(
                 file_descr,
                 bigstring,
                 ~pos=off,
@@ -105,7 +105,7 @@ let read = (fd, buffer) => {
     } else {
       Fd.syscall_in_thread(fd, ~name="read", file_descr =>
         Buffer.put(buffer, ~f=(bigstring, ~off, ~len) =>
-          Bigstring.read(file_descr, bigstring, ~pos=off, ~len)
+          Bigstring_unix.read(file_descr, bigstring, ~pos=off, ~len)
         )
       )
       >>= (result => finish(fd, buffer, result));

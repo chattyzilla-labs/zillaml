@@ -4,8 +4,8 @@
  (libraries
   async
   core
-  faraday-async
   zillaml
+  faraday-async
   (select
    ssl_io.re
    from

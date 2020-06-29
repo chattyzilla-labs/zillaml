@@ -25,7 +25,7 @@
     "build": [
       [
         "dune", "build", "-p",
-        "zillaml,zillaml-async,zillaml-httpkit-async,zillaml-httpkit,websocketzilla,websocketzilla-async,persistent-connection,lmdb"
+        "zillaml,zillaml-async,zillaml-httpkit-async,zillaml-httpkit,websocketzilla,websocketzilla-async,lmdb"
       ]
     ],
     "buildDev": "refmterr dune build examples/Main.exe",
@@ -38,18 +38,17 @@
       [ "esy-installer", "zillaml-httpkit.install" ],
       [ "esy-installer", "websocketzilla.install" ],
       [ "esy-installer", "websocketzilla-async.install" ],
-      [ "esy-installer", "persistent-connection.install" ],
       [ "esy-installer", "lmdb.install" ]
     ],
     "release": { "bin": [] }
   },
   "dependencies": {
-    "@esy-ocaml/reason": ">= 3.4.0 < 3.6.0",
+    "@esy-ocaml/reason": ">=3.6.0",
     "@opam/alcotest": "0.8.5",
     "@opam/angstrom": "0.12.1",
     "@opam/astring": "*",
-    "@opam/async": "v0.13.0",
-    "@opam/async_ssl": "v0.13.0",
+    "@opam/async": "v0.14.0",
+    "@opam/async_ssl": "v0.14.0",
     "@opam/base64": "3.2.0",
     "@opam/benchmark": "1.6",
     "@opam/bigstringaf": "0.6.0",
@@ -57,17 +56,17 @@
     "@opam/caqti-async": "*",
     "@opam/caqti-driver-postgresql": "*",
     "@opam/conduit": "*",
-    "@opam/core": "v0.13.0",
+    "@opam/core": "v0.14.0",
     "@opam/digestif": "0.8.0",
     "@opam/dune": "*",
-    "@opam/faraday": "0.7.0",
-    "@opam/faraday-async": "0.7.0",
+    "faraday": "*",
+    "faraday-async": "*",
     "@opam/fmt": "*",
     "@opam/fpath": "*",
     "@opam/js_of_ocaml-compiler": "3.5.2",
     "@opam/logs": "*",
     "@opam/ocplib-endian": "*",
-    "@opam/ppx_jane": "v0.13.0",
+    "@opam/ppx_jane": "v0.14.0",
     "@opam/ssl": ">= 0.5.8",
     "@opam/textutils": "*",
     "@opam/uri": "*",
@@ -75,20 +74,22 @@
     "@reason-native/console": "*",
     "@reason-native/pastel": "*",
     "@reason-native/rely": "*",
-    "ocaml": "~4.8.0",
+    "ocaml": "~4.10.0",
     "refmterr": "*"
   },
   "resolutions": {
-    "@opam/async": "v0.13.0",
-    "@opam/core": "v0.13.0",
-    "@opam/base": "v0.13.0",
-    "@opam/ppx_jane": "v0.13.0",
-    "@opam/async_ssl": "v0.13.0",
-    "@opam/conf-libssl": "esy-packages/esy-openssl#648930f"
+    "@opam/async": "v0.14.0",
+    "@opam/core": "v0.14.0",
+    "@opam/base": "v0.14.0",
+    "@opam/ppx_jane": "v0.14.0",
+    "@opam/async_ssl": "v0.14.0",
+    "@opam/conf-libssl": "esy-packages/esy-openssl#648930f",
+    "faraday":"chattyzilla-labs/faraday-fork:faraday.opam#b5344ec",
+    "faraday-async":"chattyzilla-labs/faraday-fork:faraday-async.opam#b5344ec"
   },
   "devDependencies": {
     "@opam/merlin": "*",
-    "ocaml": "~4.8.0",
+    "ocaml": "~4.10.0",
     "@opam/odoc": "*"
   }
 }

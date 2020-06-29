@@ -2,5 +2,5 @@
  (flags (-w -40 -w +26))
  (public_name pubsubzilla)
  (ocamlopt_flags (-S))
- (libraries async core persistent_connection websocketzilla websocketzilla-async zillaml-async zillaml-httpkit-async zillaml console.lib pastel.lib fmt logs.fmt fmt.tty logs yojson)
+ (libraries async async.persistent_connection core websocketzilla websocketzilla-async zillaml-async zillaml-httpkit-async zillaml console.lib pastel.lib fmt logs.fmt fmt.tty logs yojson)
  (preprocess (pps ppx_jane)))
