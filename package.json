@@ -74,7 +74,7 @@
     "@reason-native/console": "*",
     "@reason-native/pastel": "*",
     "@reason-native/rely": "*",
-    "ocaml": "~4.10.0",
+    "ocaml": "~4.09.0",
     "refmterr": "*"
   },
   "resolutions": {
@@ -89,7 +89,7 @@
   },
   "devDependencies": {
     "@opam/merlin": "*",
-    "ocaml": "~4.10.0",
+    "ocaml": "~4.09.0",
     "@opam/odoc": "*"
   }
 }
