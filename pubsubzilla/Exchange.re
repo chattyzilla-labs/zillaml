@@ -272,7 +272,13 @@ module TopicRouterExchange = (Message: Message) => {
     let (r, w) = Pipe.create();
     let rec aux = (topic, node) => {
       switch(topic){
-      | [] => node.subscribers = [w, ...node.subscribers]
+      | [] => {
+        node.subscribers = [w, ...node.subscribers];
+        switch (node.last_message) {
+        | None => ()
+        | Some(msg) => don't_wait_for(Pipe.write(w, msg))
+        };
+      }
       | [hd, ...tl] => 
         let next_node = Hashtbl.find_or_add(node.children, hd, ~default=() => {
           let children =
