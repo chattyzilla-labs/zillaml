@@ -78,8 +78,7 @@ module Message = {
   };
 };
 
-module MessageTopicRouterExchange = Pubsubzilla.Exchange.TopicRouterExchange(Message);
 
-module MessageTopicServer = Pubsubzilla.Exchange.MakeExchange(MessageTopicRouterExchange);
+module MessageTopicServer = Pubsubzilla.Exchange.MakeExchange(Pubsubzilla.TopicRouterExchange.Make(Message));
 
 // let pubsub_server = Pubsubzilla.Server.socket_server;

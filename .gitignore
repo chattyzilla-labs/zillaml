@@ -8,3 +8,5 @@ _release
 *.install
 .DS_Store
 ocaml-lmdb/.DS_Store
+
+.github/
