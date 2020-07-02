@@ -7,6 +7,7 @@ type ws_connection_handler = {
 
 type ws_connection = {
   path: list(string),
+  query: list((string, list(string))),
   wsd: Websocketzilla.Wsd.t,
   send: string => unit,
   id: int32

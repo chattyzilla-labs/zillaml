@@ -95,7 +95,7 @@ type error_handler =
           Websocketzilla.Wsd.schedule(wsd, bs, ~kind=`Text, ~off=0, ~len= String.length(str))
         }
       }
-      and t = lazy(on_connect({  Websocket_async.wsd, send, id: random_int32(), path: get_path(req) }))
+      and t = lazy(on_connect({  Websocket_async.wsd, send, id: random_int32(), path: get_path(req), query: get_query(req)}))
       let { Websocket_async.on_message, on_close } = Lazy.force(t);
       let finalise_content = (accum_content) => String.concat(List.rev(accum_content));
       let frame = (~opcode, ~is_fin, bs, ~off, ~len) =>
@@ -265,7 +265,7 @@ let create_server_with_web_sockets = (~port, ~on_start, ~max_accepts_per_batch, 
           Websocketzilla.Wsd.schedule(wsd, bs, ~kind=`Text, ~off=0, ~len= String.length(str))
         }
       }
-      and t = lazy(on_ws_connect({  Websocket_async.wsd, send, id: random_int32(), path: get_path(req) }))
+      and t = lazy(on_ws_connect({  Websocket_async.wsd, send, id: random_int32(), path: get_path(req), query: get_query(req) }))
       let { Websocket_async.on_message, on_close } = Lazy.force(t);
       let finalise_content = (accum_content) => String.concat(List.rev(accum_content));
       let frame = (~opcode, ~is_fin, bs, ~off, ~len) =>

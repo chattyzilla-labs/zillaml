@@ -36,6 +36,9 @@ type routeResponseT = {
   };
 
   let get_path = (req: Zillaml.Request.t) => Uri.of_string(req.target) |> Uri.path |> String.split_on_char('/') |> List.tl;
+  let get_query = (req: Zillaml.Request.t) =>
+    Uri.of_string(req.target)
+    |> Uri.query;
 
   let create_router = routerFn => (req: Zillaml.Request.t, body_) => {
     let body = switch body_ {
