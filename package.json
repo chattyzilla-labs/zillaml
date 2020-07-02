@@ -38,7 +38,8 @@
       [ "esy-installer", "zillaml-httpkit.install" ],
       [ "esy-installer", "websocketzilla.install" ],
       [ "esy-installer", "websocketzilla-async.install" ],
-      [ "esy-installer", "lmdb.install" ]
+      [ "esy-installer", "lmdb.install" ],
+      [ "esy-installer", "pubsubzilla.install" ]
     ],
     "release": { "bin": [] }
   },
