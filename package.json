@@ -25,7 +25,7 @@
     "build": [
       [
         "dune", "build", "-p",
-        "zillaml,zillaml-async,zillaml-httpkit-async,zillaml-httpkit,websocketzilla,websocketzilla-async,lmdb"
+        "zillaml,zillaml-async,zillaml-httpkit-async,pubsubzilla,zillaml-httpkit,websocketzilla,websocketzilla-async,lmdb"
       ]
     ],
     "buildDev": "refmterr dune build examples/Main.exe",
