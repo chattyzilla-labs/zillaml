@@ -51,14 +51,16 @@ let error_handler:
 
 let router = Router.run_router([ping_router]) |> Router.create_router;
 
-let socket_server = ((port, accepts), ()) => Http.create_socket_server(
+let socket_server = ((port, accepts), ()) => Http.create_server_with_web_sockets(
     ~port,
     ~on_start=on_start,
     ~max_accepts_per_batch=accepts,
-    ~check_request=(req) => Deferred.return(Websocket_async.upgrade_present(req.headers) && Websocket_async.default_ws_path(req)),
-    ~on_connect=(ws) => {
+    ~check_for_websocket_request=(req) => Deferred.return(Websocket_async.upgrade_present(req.headers) && Websocket_async.default_ws_path(req)),
+    ~on_ws_connect=(ws) => {
       { Websocket_async.on_message: (msg) => ws.send(msg), on_close: () => ()}
-    }
+    },
+    ~http_router=router, 
+    ~reqlogger=Some(Common.req_logger)
 );
 
 let server = ((port, accepts), ()) => Http.create_server(
