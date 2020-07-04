@@ -96,7 +96,7 @@ module MakeExchange = (Exchange: Exchange) => {
      };
 
     // https://github.com/janestreet/async_rpc_kernel/blob/master/src/rpc.mli#L566
-     let subscribe = (~connection, ~topic) => {
+     let subscribe_old = (~connection, ~topic) => {
        switch%bind (Rpc.Pipe_rpc.dispatch(subscribe_rpc, connection, topic)) {
        | Error(err) => Error.raise(err)
        | Ok(Error(s)) =>
@@ -105,6 +105,16 @@ module MakeExchange = (Exchange: Exchange) => {
        | Ok(Ok((pipe, _id))) => return(Ok(pipe))
        };
      };
+
+    let subscribe = (~connection, ~topic, ~f) => {
+      switch%bind (Rpc.Pipe_rpc.dispatch_iter(subscribe_rpc, connection, topic, ~f)) {
+      | Error(err) => Error.raise(err)
+      | Ok(Error(s)) =>
+        eprintf("subscribe failed: %s\n", s);
+        return(Error(s));
+      | Ok(Ok(id)) => return(Ok(id))
+      };
+    };
 
      let clear = (~connection, ~topic) => {
        Rpc.Rpc.dispatch_exn(clear_rpc, connection, topic);

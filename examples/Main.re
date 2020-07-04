@@ -148,7 +148,7 @@ let () =
                 ~port=5000,
               );
             switch%bind (
-              Client.subscribe(
+              Client.subscribe_old(
                 ~connection=conn,
                 ~topic=[
                   Word("dakota"),

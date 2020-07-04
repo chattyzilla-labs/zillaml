@@ -5,7 +5,7 @@ open Exchange;
 module Make = (Message: Message) => {
   module Topic = {
     module Directory = {
-      [@deriving (sexp, hash, bin_io, compare)]
+      [@deriving (sexp, hash, bin_io, compare, yojson)]
       type t =
         | Hashtag
         | Star

@@ -72,6 +72,7 @@
     "@opam/textutils": "*",
     "@opam/uri": "*",
     "@opam/yojson": "*",
+    "@opam/ppx_yojson_conv": "*",
     "@reason-native/console": "*",
     "@reason-native/pastel": "*",
     "@reason-native/rely": "*",
@@ -84,7 +85,8 @@
     "@opam/base": "v0.14.0",
     "@opam/ppx_jane": "v0.14.0",
     "@opam/async_ssl": "v0.14.0",
-    "@opam/conf-libssl": "esy-packages/esy-openssl#648930f",
+    "@opam/ppx_yojson_conv": "v0.14.0",
+    "@opam/conf-libssl": "esy-packages/esy-openssl#4476291",
     "faraday":"chattyzilla-labs/faraday-fork:faraday.opam#b5344ec",
     "faraday-async":"chattyzilla-labs/faraday-fork:faraday-async.opam#b5344ec"
   },

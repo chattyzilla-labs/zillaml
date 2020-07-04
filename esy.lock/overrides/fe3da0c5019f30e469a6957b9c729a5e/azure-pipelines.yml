@@ -3,17 +3,17 @@ jobs:
   parameters:
     host: macOS
     pool:
-      vmImage: 'macOS-10.13'
+      vmImage: 'macOS-latest'
 
 - template: .ci/build.yaml  # Template reference
   parameters:
     host: Linux
     pool:
-      vmImage: 'Ubuntu-16.04'
+      vmImage: 'ubuntu-latest'
 
 - template: .ci/build.yaml  # Template reference
   parameters:
     host: Windows
     pool:
-      vmImage: 'vs2017-win2016'
+      vmImage: 'windows-latest'
     sign: true  # Extra step on Windows only
