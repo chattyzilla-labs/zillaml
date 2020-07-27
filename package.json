@@ -25,7 +25,7 @@
     "build": [
       [
         "dune", "build", "-p",
-        "zillaml,zillaml-async,zillaml-httpkit-async,pubsubzilla,zillaml-httpkit,websocketzilla,websocketzilla-async,lmdb"
+        "zillaml,gluten-async,zillaml-async,gluten,zillaml-httpkit-async,pubsubzilla,zillaml-httpkit,websocketzilla,websocketzilla-async,lmdb"
       ]
     ],
     "buildDev": "refmterr dune build examples/Main.exe",
@@ -33,6 +33,8 @@
     "buildEnv": { "ODOC_SYNTAX": "re" },
     "install": [
       [ "esy-installer", "zillaml.install" ],
+      [ "esy-installer", "gluten.install" ],
+      [ "esy-installer", "gluten-async.install" ],
       [ "esy-installer", "zillaml-async.install" ],
       [ "esy-installer", "zillaml-httpkit-async.install" ],
       [ "esy-installer", "zillaml-httpkit.install" ],

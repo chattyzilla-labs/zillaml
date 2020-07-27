@@ -38,12 +38,14 @@ type error = [
   | `Exn(exn)
 ];
 
-type state =
-  | Uninitialized
-  | Awaiting_response
-  | Received_response(Response.t, Body.t([ | `read]))
-  | Upgraded(Response.t)
-  | Closed;
+module Request_state = {
+  type t =
+    | Uninitialized
+    | Awaiting_response
+    | Received_response(Response.t, Body.t([ | `read]))
+    | Upgraded(Response.t)
+    | Closed;
+};
 
 type t = {
   request: Request.t,
@@ -52,7 +54,7 @@ type t = {
   error_handler: error => unit,
   mutable error_code: [ | `Ok | error],
   writer: Writer.t,
-  mutable state,
+  mutable state: Request_state.t,
   mutable persistent: bool,
 };
 
@@ -62,11 +64,12 @@ let create = (error_handler, request, request_body, writer, response_handler) =>
     if (t.persistent) {
       t.persistent = Response.persistent_connection(response);
     };
-    let next_state =
+    let next_state: Request_state.t = (
       switch (response.status) {
       | `Switching_protocols => Upgraded(response)
       | _ => Received_response(response, body)
-      };
+      }: Request_state.t
+    );
 
     t.state = next_state;
     response_handler(response, body);
@@ -88,32 +91,25 @@ let create = (error_handler, request, request_body, writer, response_handler) =>
 
 let request = ({request, _}) => request;
 
-let request_body = ({request_body, _}) => request_body;
-
 let write_request = t => {
   Writer.write_request(t.writer, t.request);
   t.state = Awaiting_response;
 };
 
-let on_more_output_available = ({request_body, _}, f) =>
-  Body.when_ready_to_write(request_body, f);
-
-/* TODO: wondering if any of the `Received_response` changes here
- * apply to us: https://github.com/inhabitedtype/httpaf/pull/148 */
-let report_error = (t, error) =>
-  /* t.persistent <- false; */
-  /* TODO: drain queue? */
+let report_error = (t, error) => {
+  t.persistent = false;
   switch (t.state, t.error_code) {
-  | (
-      Uninitialized | Awaiting_response | Received_response(_) | Upgraded(_),
-      `Ok,
-    ) =>
+  | (Uninitialized | Awaiting_response | Upgraded(_), `Ok) =>
     t.state = Closed;
     t.error_code = (error :> [ | `Ok | error]);
     t.error_handler(error);
   | (Uninitialized, `Exn(_)) =>
     /* TODO(anmonteiro): Not entirely sure this is possible in the client. */
     failwith("httpaf.Reqd.report_exn: NYI")
+  | (Received_response(_, response_body), `Ok) =>
+    Body.close_reader(response_body);
+    t.error_code = (error :> [ | `Ok | error]);
+    t.error_handler(error);
   | (
       Uninitialized | Awaiting_response | Received_response(_) | Closed |
       Upgraded(_),
@@ -123,6 +119,7 @@ let report_error = (t, error) =>
      * in case it is not spurious. */
     ()
   };
+};
 
 let persistent_connection = t => t.persistent;
 
@@ -136,31 +133,39 @@ let close_response_body = t =>
   | Upgraded(_) => t.state = Closed
   };
 
-let requires_input = t =>
+let input_state = (t): Input_state.t =>
   switch (t.state) {
-  | Uninitialized => true
-  | Awaiting_response => true
-  | Upgraded(_) => false
+  | Uninitialized
+  | Awaiting_response => Ready
   | Received_response(_, response_body) =>
-    !Body.is_closed(response_body)
-  | Closed => false
+    if (Body.is_closed(response_body)) {
+      Complete;
+    } else if (Body.is_read_scheduled(response_body)) {
+      Ready;
+    } else {
+      Wait;
+    }
+  /* Upgraded is "Complete" because the descriptor doesn't wish to receive
+   * any more input. */
+  | Upgraded(_)
+  | Closed => Complete
   };
 
-let requires_output = ({request_body, state, _}) =>
+let output_state = ({request_body, state, _}): Output_state.t =>
   switch (state) {
   | Upgraded(_) =>
     /* XXX(anmonteiro): Connections that have been upgraded "require output"
      * forever, but outside the HTTP layer, meaning they're permanently
      * "yielding". For now they need to be explicitly shutdown in order to
      * transition the response descriptor to the `Closed` state. */
-    true
+    Waiting
   | state =>
-    state == Uninitialized
-    || !Body.is_closed(request_body)
-    || Body.has_pending_output(request_body)
+    if (state == Uninitialized || Body.requires_output(request_body)) {
+      Ready;
+    } else {
+      Complete;
+    }
   };
-
-let is_complete = t => !(requires_input(t) || requires_output(t));
 
 let flush_request_body = ({request, request_body, writer, _}) =>
   if (Body.has_pending_output(request_body)) {
@@ -180,9 +185,10 @@ let flush_response_body = t =>
   | Closed
   | Upgraded(_) => ()
   | Received_response(_, response_body) =>
-    try(Body.execute_read(response_body)) {
-    /* TODO: report_exn */
-    | _exn => Format.eprintf("EXN@.")
+    if (Body.has_pending_output(response_body)) {
+      try(Body.execute_read(response_body)) {
+      | exn => report_error(t, `Exn(exn))
+      };
     }
   };
-/* report_exn t exn */
+

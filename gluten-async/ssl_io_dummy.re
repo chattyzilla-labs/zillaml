@@ -1,6 +1,6 @@
 /*----------------------------------------------------------------------------
- *  Copyright (c) 2019 António Nuno Monteiro
- *  Copyright (c) 2019 Dakota Murphy
+ *  Copyright (c) 2019-2020 António Nuno Monteiro
+ *  Copyright (c) 2019-2020 Dakota Murphy
  * 
  *  All rights reserved.
  *
@@ -31,49 +31,34 @@
  *  POSSIBILITY OF SUCH DAMAGE.
  *---------------------------------------------------------------------------*/
 
+type descriptor = [ | `Ssl_not_available];
+
 open Async;
-open Zillaml;
 
-module type Server = {
-  type socket;
+module Io:
+  Gluten_async_intf.IO with
+    type socket = descriptor and type addr = Socket.Address.Inet.t = {
+  type socket = descriptor;
 
-  type addr;
+  type addr = Socket.Address.Inet.t;
 
-  let create_connection_handler:
-    (
-      ~config: Config.t=?,
-      ~request_handler: addr => Gluten.Server.request_handler(Zillaml.Reqd.t),
-      ~error_handler: addr => Server_connection.error_handler,
-      addr,
-      socket
-    ) =>
-    Deferred.t(unit);
+  let read = (_, _bigstring, ~off as _, ~len as _) =>
+    failwith("Ssl not available");
+
+  let writev = (_, _iovecs) => failwith("Ssl not available");
+
+  let shutdown_send = _ => failwith("Ssl not available");
+
+  let shutdown_receive = _ => failwith("Ssl not available");
+
+  let close = _ => failwith("Ssl not available");
 };
 
-module type Client = {
-  type socket;
+let make_default_client = (~alpn_protocols as _=?, _socket) =>
+  Core.failwith("Ssl not available");
 
-  type runtime;
-
-  type t = {
-    connection: Zillaml.Client_connection.t,
-    runtime,
-  };
-
-  let create_connection: (~config: Config.t=?, socket) => Deferred.t(t);
-
-  let request:
-    (
-      t,
-      Request.t,
-      ~error_handler: Client_connection.error_handler,
-      ~response_handler: Client_connection.response_handler
-    ) =>
-    Body.t([ | `write]);
-
-  let shutdown: t => Deferred.t(unit);
-
-  let is_closed: t => bool;
-
-  let upgrade: (t, Gluten.impl) => unit;
+[@ocaml.warning "-21"]
+let make_server = (~alpn_protocols as _=?, ~certfile as _, ~keyfile as _) => {
+  failwith("Ssl not available");
+  _socket => Core.failwith("Ssl not available");
 };

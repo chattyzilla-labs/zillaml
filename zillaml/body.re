@@ -31,34 +31,42 @@
     POSSIBILITY OF SUCH DAMAGE.
   ----------------------------------------------------------------------------*/
 
+/* XXX(dpatti): A [Body.t] is kind of a reader body and writer body stitched
+   together into a single structure, but only half of it is used at any given
+   time. The two uses are also quite different in that a writer body is always
+   wired up to some [Writer.t] by httpaf internals at time of creation, whereas
+   a reader body is given to the user as-is and the user is expected to drive
+   the feeding of data into the body. It feels like they should simply be two
+   separate types. */
+
 type t(_) = {
   faraday: Faraday.t,
   mutable read_scheduled: bool,
   mutable write_final_if_chunked: bool,
   mutable on_eof: unit => unit,
   mutable on_read: (Bigstringaf.t, ~off: int, ~len: int) => unit,
-  mutable when_ready_to_write: unit => unit,
+  mutable when_ready: Optional_thunk.t,
   buffered_bytes: ref(int),
 };
 
 let default_on_eof = Sys.opaque_identity(() => ());
 let default_on_read = Sys.opaque_identity((_, ~off as _, ~len as _) => ());
-let default_ready_to_write = Sys.opaque_identity(() => ());
 
-let of_faraday = faraday => {
+let of_faraday = (faraday, when_ready) => {
   faraday,
   read_scheduled: false,
   write_final_if_chunked: true,
   on_eof: default_on_eof,
   on_read: default_on_read,
-  when_ready_to_write: default_ready_to_write,
+  when_ready,
   buffered_bytes: ref(0),
 };
 
-let create = buffer => of_faraday(Faraday.of_bigstring(buffer));
+let create = (buffer, when_ready) =>
+  of_faraday(Faraday.of_bigstring(buffer), when_ready);
 
 let create_empty = () => {
-  let t = create(Bigstringaf.empty);
+  let t = create(Bigstringaf.empty, Optional_thunk.none);
   t.write_final_if_chunked = false;
   Faraday.close(t.faraday);
   t;
@@ -79,22 +87,18 @@ let write_bigstring = (t, ~off=?, ~len=?, b) =>
 let schedule_bigstring = (t, ~off=?, ~len=?, b: Bigstringaf.t) =>
   Faraday.schedule_bigstring(~off?, ~len?, t.faraday, b);
 
-let ready_to_write = t => {
-  let callback = t.when_ready_to_write;
-  t.when_ready_to_write = default_ready_to_write;
-  callback();
-};
+let ready = t => Optional_thunk.call_if_some(t.when_ready);
 
 let flush = (t, kontinue) => {
   Faraday.flush(t.faraday, kontinue);
-  ready_to_write(t);
+  ready(t);
 };
 
 let is_closed = t => Faraday.is_closed(t.faraday);
 
 let close_writer = t => {
   Faraday.close(t.faraday);
-  ready_to_write(t);
+  ready(t);
 };
 
 let unsafe_faraday = t => t.faraday;
@@ -132,8 +136,11 @@ let schedule_read = (t, ~on_eof, ~on_read) => {
     t.read_scheduled = true;
     t.on_eof = on_eof;
     t.on_read = on_read;
+    ready(t);
   };
 };
+
+let is_read_scheduled = t => t.read_scheduled;
 
 let has_pending_output = t =>
   /* Force another write poll to make sure that the final chunk is emitted for
@@ -147,21 +154,13 @@ let has_pending_output = t =>
   || Faraday.is_closed(t.faraday)
   && t.write_final_if_chunked;
 
+let requires_output = t => !is_closed(t) || has_pending_output(t);
+
 let close_reader = t => {
   Faraday.close(t.faraday);
   execute_read(t);
+  ready(t);
 };
-
-let when_ready_to_write = (t, callback) =>
-  if (!(t.when_ready_to_write === default_ready_to_write)) {
-    failwith(
-      "Body.when_ready_to_write: only one callback can be registered at a time",
-    );
-  } else if (is_closed(t)) {
-    callback();
-  } else {
-    t.when_ready_to_write = callback;
-  };
 
 let transfer_to_writer_with_encoding = (t, ~encoding, writer) => {
   let faraday = t.faraday;
@@ -185,11 +184,7 @@ let transfer_to_writer_with_encoding = (t, ~encoding, writer) => {
     let must_write_the_final_chunk = t.write_final_if_chunked;
     t.write_final_if_chunked = false;
     if (must_write_the_final_chunk) {
-      switch (encoding) {
-      | `Chunked => Serialize.Writer.schedule_chunk(writer, [])
-      | `Fixed(_)
-      | `Close_delimited => ()
-      };
+      Serialize.Writer.schedule_chunk(writer, []);
     };
     Serialize.Writer.unyield(writer);
   | `Writev(iovecs) =>
@@ -214,3 +209,4 @@ let transfer_to_writer_with_encoding = (t, ~encoding, writer) => {
     };
   };
 };
+

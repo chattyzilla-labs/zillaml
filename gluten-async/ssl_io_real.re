@@ -1,6 +1,6 @@
 /*----------------------------------------------------------------------------
- *  Copyright (c) 2019 Antonio Nuno Monteiro
- *  Copyright (c) 2020 Dakota Murphy
+ *  Copyright (c) 2019-2020 António Nuno Monteiro
+ *
  *  All rights reserved.
  *
  *  Redistribution and use in source and binary forms, with or without
@@ -29,66 +29,87 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  *  POSSIBILITY OF SUCH DAMAGE.
  *---------------------------------------------------------------------------*/
+
 open Core;
-
 open Async;
-
 open Async_ssl;
-
 module Unix = Core.Unix;
 
-type descriptor = (Ssl.Connection.t, Reader.t, Writer.t);
+type descriptor = {
+  reader: Reader.t,
+  writer: Writer.t,
+  closed: Ivar.t(unit),
+};
 
 module Io:
-  (Zillaml_async_intf.IO with
-    type socket = descriptor and type addr = [ Socket.Address.Inet.t | Socket.Address.Unix.t]) = {
-  type socket = descriptor;
-  type addr = [ Socket.Address.Inet.t | Socket.Address.Unix.t];
-  let read = ((_conn, reader, _writer), bigstring, ~off, ~len) => {
+  Gluten_async_intf.IO with
+    type socket = descriptor and type addr = Socket.Address.Inet.t = {
+  type socket =
+    descriptor = {
+      reader: Reader.t,
+      writer: Writer.t,
+      closed: Ivar.t(unit),
+    };
+
+  type addr = Socket.Address.Inet.t;
+
+  let read = ({reader, _}, bigstring, ~off, ~len) => {
     let bigsubstr = Bigsubstring.create(~pos=off, ~len, bigstring);
     Reader.read_bigsubstring(reader, bigsubstr);
   };
-  let writev = ((_conn, _reader, writer), iovecs) => {
+
+  let writev = ({writer, _}, iovecs) => {
     let iovecs_q = Queue.create(~capacity=List.length(iovecs), ());
     let len =
       List.fold(
         ~init=0,
         ~f=
           (acc, {Faraday.buffer, off: pos, len}) => {
-            Queue.enqueue(iovecs_q, Unix.IOVec.of_bigstring(~pos, ~len, buffer));
+            Queue.enqueue(
+              iovecs_q,
+              Unix.IOVec.of_bigstring(~pos, ~len, buffer),
+            );
             acc + len;
           },
-        iovecs
+        iovecs,
       );
+
     if (Writer.is_closed(writer)) {
       Deferred.return(`Closed);
     } else {
       Writer.schedule_iovecs(writer, iovecs_q);
-      Writer.flushed(writer) >>| (() => `Ok(len));
+      let pipe = Writer.pipe(writer);
+      Pipe.downstream_flushed(pipe) >>| (_ => `Ok(len));
     };
   };
-  let shutdown_send = ((_conn, _reader, writer)) => Async.don't_wait_for(Writer.close(writer));
-  let shutdown_receive = ((_conn, reader, _writer)) => Async.don't_wait_for(Reader.close(reader));
-  let close = ((conn, _reader, _writer)) => {
-    Ssl.Connection.close(conn);
-    Deferred.unit;
-  };
-  let state = ((_conn, reader, writer)) =>
-    if (Writer.is_stopped_permanently(writer)) {
-      `Error;
-    } else if (Writer.is_closed(writer) && Reader.is_closed(reader)) {
-      `Closed;
-    } else {
-      `Open;
-    };
+
+  /* From RFC8446§6.1:
+   *   The client and the server must share knowledge that the connection is
+   *   ending in order to avoid a truncation attack.
+   *
+   * Note: In the SSL / TLS runtimes we can't just shutdown one part of the
+   * full-duplex connection, as both sides must know that the underlying TLS
+   * conection is closing. */
+  let shutdown_send = _ => ();
+
+  let shutdown_receive = _ => ();
+
+  let close = ({reader, writer, closed}) =>
+    Writer.flushed(writer)
+    >>= (
+      () =>
+        Deferred.all_unit([Writer.close(writer), Reader.close(reader)])
+        >>= (() => Ivar.read(closed))
+    );
 };
 
 /* taken from https://github.com/janestreet/async_extra/blob/master/src/tcp.ml */
-let reader_writer_of_sock = (~buffer_age_limit=?, ~reader_buffer_size=?, ~writer_buffer_size=?, s) => {
+let reader_writer_of_sock =
+    (~buffer_age_limit=?, ~reader_buffer_size=?, ~writer_buffer_size=?, s) => {
   let fd = Socket.fd(s);
   (
     Reader.create(~buf_len=?reader_buffer_size, fd),
-    Writer.create(~buffer_age_limit?, ~buf_len=?writer_buffer_size, fd)
+    Writer.create(~buffer_age_limit?, ~buf_len=?writer_buffer_size, fd),
   );
 };
 
@@ -100,34 +121,37 @@ let connect = (r, w) => {
   Ssl.client(~app_to_ssl, ~ssl_to_app, ~net_to_ssl, ~ssl_to_net, ())
   |> Deferred.Or_error.ok_exn
   >>= (
-    (conn) =>
-      Reader.of_pipe(Info.of_string("zillaml_async_ssl_reader"), app_rd)
+    _connection =>
+      Reader.of_pipe(Info.of_string("httpaf_async_ssl_reader"), app_rd)
       >>= (
-        (app_reader) =>
-          Writer.of_pipe(Info.of_string("zillaml_async_ssl_writer"), app_wr)
+        app_reader =>
+          Writer.of_pipe(Info.of_string("httpaf_async_ssl_writer"), app_wr)
           >>| (
-            ((app_writer, _)) => {
+            (
+              (
+                app_writer,
+                `Closed_and_flushed_downstream(closed_and_flushed),
+              ),
+            ) => {
+              let ivar = Ivar.create();
               don't_wait_for(
-                Deferred.all_unit([
-                  Writer.close_finished(app_writer),
-                  Reader.close_finished(app_reader)
-                ])
+                closed_and_flushed
                 >>= (
-                  () => {
-                    Ssl.Connection.close(conn);
-                    Pipe.close_read(app_rd);
-                    Writer.close(w);
-                  }
-                )
+                  () =>
+                    Reader.close_finished(app_reader)
+                    >>| (() => Writer.close(w) >>> Ivar.fill(ivar))
+                ),
               );
-              (conn, app_reader, app_writer);
+              {reader: app_reader, writer: app_writer, closed: Ivar.create()};
             }
           )
       )
   );
 };
 
-let make_default_client = (socket) => {
+/* XXX(anmonteiro): Unfortunately Async_ssl doesn't seem to support configuring
+ * the ALPN protocols */
+let make_default_client = (~alpn_protocols as _=?, socket) => {
   let (reader, writer) = reader_writer_of_sock(socket);
   connect(reader, writer);
 };
@@ -137,37 +161,48 @@ let listen = (~crt_file, ~key_file, r, w) => {
   let ssl_to_net = Writer.pipe(w);
   let (app_to_ssl, app_wr) = Pipe.create();
   let (app_rd, ssl_to_app) = Pipe.create();
-  Ssl.server(~crt_file, ~key_file, ~app_to_ssl, ~ssl_to_app, ~net_to_ssl, ~ssl_to_net, ())
+  Ssl.server(
+    ~crt_file,
+    ~key_file,
+    ~app_to_ssl,
+    ~ssl_to_app,
+    ~net_to_ssl,
+    ~ssl_to_net,
+    (),
+  )
   |> Deferred.Or_error.ok_exn
   >>= (
-    (conn) =>
+    _connection =>
       Reader.of_pipe(Info.of_string("httpaf_async_ssl_reader"), app_rd)
       >>= (
-        (app_reader) =>
+        app_reader =>
           Writer.of_pipe(Info.of_string("httpaf_async_ssl_writer"), app_wr)
           >>| (
-            ((app_writer, _)) => {
+            (
+              (
+                app_writer,
+                `Closed_and_flushed_downstream(closed_and_flushed),
+              ),
+            ) => {
+              let ivar = Ivar.create();
               don't_wait_for(
-                Deferred.all_unit([
-                  Reader.close_finished(app_reader),
-                  Writer.close_finished(app_writer)
-                ])
+                closed_and_flushed
                 >>= (
-                  () => {
-                    Ssl.Connection.close(conn);
-                    Pipe.close_read(app_rd);
-                    Writer.close(w);
-                  }
-                )
+                  () =>
+                    Reader.close_finished(app_reader)
+                    >>| (() => Writer.close(w) >>> Ivar.fill(ivar))
+                ),
               );
-              (conn, app_reader, app_writer);
+              {reader: app_reader, writer: app_writer, closed: ivar};
             }
           )
       )
   );
 };
 
-let make_server = (~certfile, ~keyfile, socket) => {
+/* XXX(anmonteiro): Unfortunately Async_ssl doesn't seem to support configuring
+ * the ALPN protocols */
+let make_server = (~alpn_protocols as _=?, ~certfile, ~keyfile, socket) => {
   let (reader, writer) = reader_writer_of_sock(socket);
   listen(~crt_file=certfile, ~key_file=keyfile, reader, writer);
 };

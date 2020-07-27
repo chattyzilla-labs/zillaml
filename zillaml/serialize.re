@@ -102,24 +102,25 @@ let schedule_bigstring_chunk = (t, chunk) => {
 
 module Writer = {
   type t = {
-    buffer:
-      Bigstringaf.t,
-      /* The buffer that the encoder uses for buffered writes. Managed by the
-       * control module for the encoder. */
-    encoder:
-      Faraday.t,
-      /* The encoder that handles encoding for writes. Uses the [buffer]
-       * referenced above internally. */
+    buffer: Bigstringaf.t,
+    /* The buffer that the encoder uses for buffered writes. Managed by the
+     * control module for the encoder. */
+    encoder: Faraday.t,
+    /* The encoder that handles encoding for writes. Uses the [buffer]
+     * referenced above internally. */
     mutable drained_bytes: int,
     /* The number of bytes that were not written due to the output stream
      * being closed before all buffered output could be written. Useful for
      * detecting error cases. */
+    mutable wakeup: Optional_thunk.t,
+    /* The callback from the runtime to be invoked when output is ready to be
+     * flushed. */
   };
 
   let create = (~buffer_size=0x800, ()) => {
     let buffer = Bigstringaf.create(buffer_size);
     let encoder = Faraday.of_bigstring(buffer);
-    {buffer, encoder, drained_bytes: 0};
+    {buffer, encoder, drained_bytes: 0, wakeup: Optional_thunk.none};
   };
 
   let faraday = t => t.encoder;
@@ -154,6 +155,21 @@ module Writer = {
     write_crlf(t.encoder);
   };
 
+  let on_wakeup = (t, k) =>
+    if (Faraday.is_closed(t.encoder)) {
+      failwith("on_wakeup on closed writer");
+    } else if (Optional_thunk.is_some(t.wakeup)) {
+      failwith("on_wakeup: only one callback can be registered at a time");
+    } else {
+      t.wakeup = Optional_thunk.some(k);
+    };
+
+  let wakeup = t => {
+    let f = t.wakeup;
+    t.wakeup = Optional_thunk.none;
+    Optional_thunk.call_if_some(f);
+  };
+
   let flush = (t, f) => flush(t.encoder, f);
 
   let unyield = t =>
@@ -170,6 +186,7 @@ module Writer = {
     Faraday.close(t.encoder);
     let drained = Faraday.drain(t.encoder);
     t.drained_bytes = t.drained_bytes + drained;
+    wakeup(t);
   };
 
   let is_closed = t => Faraday.is_closed(t.encoder);
@@ -182,10 +199,12 @@ module Writer = {
     | `Ok(len) => shift(t.encoder, len)
     };
 
-  let next = t =>
+  let next = t => {
+    assert(Optional_thunk.is_none(t.wakeup));
     switch (Faraday.operation(t.encoder)) {
     | `Close => `Close(drained_bytes(t))
     | `Yield => `Yield
     | `Writev(iovecs) => `Write(iovecs)
     };
+  };
 };

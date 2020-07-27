@@ -1,6 +1,7 @@
 /*----------------------------------------------------------------------------
- *  Copyright (c) 2019 António Nuno Monteiro
- *  Copyright (c) 2020 Dakota Murphy
+ *  Copyright (c) 2019-2020 António Nuno Monteiro
+ *  Copyright (c) 2019-2020 Dakota Murphy
+ * 
  *  All rights reserved.
  *
  *  Redistribution and use in source and binary forms, with or without
@@ -30,35 +31,69 @@
  *  POSSIBILITY OF SUCH DAMAGE.
  *---------------------------------------------------------------------------*/
 
-type descriptor = [ | `Ssl_not_available];
-
 open Async;
 
-module Io:
-  Zillaml_async_intf.IO with
-    type socket = descriptor and
-    type addr = [ Socket.Address.Inet.t | Socket.Address.Unix.t] = {
-  type socket = descriptor;
+module type IO = {
+  type socket;
 
-  type addr = [ Socket.Address.Inet.t | Socket.Address.Unix.t];
+  type addr;
 
-  let read = (_, _bigstring, ~off as _, ~len as _) =>
-    Core.failwith("Ssl not available");
+  /** The region [(off, off + len)] is where read bytes can be written to */
 
-  let writev = (_, _iovecs) => Core.failwith("Ssl not available");
+  let read:
+    (socket, Bigstringaf.t, ~off: int, ~len: int) =>
+    Deferred.t([ | `Eof | `Ok(int)]);
 
-  let shutdown_send = _ => failwith("Ssl not available");
+  let writev:
+    (socket, list(Faraday.iovec(Faraday.bigstring))) =>
+    Deferred.t([ | `Closed | `Ok(int)]);
 
-  let shutdown_receive = _ => failwith("Ssl not available");
+  let shutdown_send: socket => unit;
 
-  let close = _ => failwith("Ssl not available");
+  let shutdown_receive: socket => unit;
 
-  let state = _ => failwith("Ssl not available");
+  let close: socket => Deferred.t(unit);
 };
 
-let make_default_client = _socket => Core.failwith("Ssl not available");
+module type Server = {
+  type socket;
 
-let make_server = (~certfile as _, ~keyfile as _) => {
-  let _ = failwith("Ssl not available");
-  _socket => Core.failwith("Ssl not available");
+  type addr;
+
+  let create_upgradable_connection_handler:
+    (
+      ~read_buffer_size: int,
+      ~protocol: Gluten.runtime('t),
+      ~create_protocol: ('reqd => unit) => 't,
+      ~request_handler: addr => Gluten.Server.request_handler('reqd),
+      addr,
+      socket
+    ) =>
+    Deferred.t(unit);
+
+  let create_connection_handler:
+    (
+      ~read_buffer_size: int,
+      ~protocol: Gluten.runtime('t),
+      't,
+      addr,
+      socket
+    ) =>
+    Deferred.t(unit);
+};
+
+module type Client = {
+  type t;
+
+  type socket;
+
+  let create:
+    (~read_buffer_size: int, ~protocol: Gluten.runtime('t), 't, socket) =>
+    Deferred.t(t);
+
+  let upgrade: (t, Gluten.impl) => unit;
+
+  let shutdown: t => Deferred.t(unit);
+
+  let is_closed: t => bool;
 };

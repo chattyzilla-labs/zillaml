@@ -34,7 +34,7 @@
 module Reader = Parse.Reader;
 module Writer = Serialize.Writer;
 
-type request_handler('fd, 'io) = Reqd.t('fd, 'io) => unit;
+type request_handler = Reqd.t => unit;
 
 type error = [
   | `Bad_gateway
@@ -46,24 +46,27 @@ type error = [
 type error_handler =
   (~request: Request.t=?, error, Headers.t => Body.t([ | `write])) => unit;
 
-type t('fd, 'io) = {
+type error_code =
+  | No_error
+  | Error({
+      request: option(Request.t),
+      mutable response_state: Response_state.t,
+    });
+
+type t = {
   reader: Reader.request,
   writer: Writer.t,
   response_body_buffer: Bigstringaf.t,
-  request_handler: request_handler('fd, 'io),
+  request_handler,
   error_handler,
-  request_queue: Queue.t(Reqd.t('fd, 'io)),
+  request_queue: Queue.t(Reqd.t),
   /* invariant: If [request_queue] is not empty, then the head of the queue
      has already had [request_handler] called on it. */
-  mutable wakeup_writer: unit => unit,
-  mutable wakeup_reader: unit => unit,
+  mutable error_code,
   /* Represents an unrecoverable error that will cause the connection to
    * shutdown. Holds on to the response body created by the error handler
    * that might be streaming to the client. */
-  mutable error_code: [ | `Ok | `Error(Body.t([ | `write]))],
 };
-
-let default_wakeup = Sys.opaque_identity(() => ());
 
 let is_closed = t =>
   Reader.is_closed(t.reader) && Writer.is_closed(t.writer);
@@ -74,48 +77,13 @@ let is_active = t => !Queue.is_empty(t.request_queue);
 
 let current_reqd_exn = t => Queue.peek(t.request_queue);
 
-let yield_reader = (t, k) =>
-  if (is_closed(t)) {
-    failwith("on_wakeup_reader on closed conn");
-  } else if (!(t.wakeup_reader === default_wakeup)) {
-    failwith("yield_reader: only one callback can be registered at a time");
-  } else {
-    t.wakeup_reader = k;
-  };
+let yield_reader = (t, k) => Reader.on_wakeup(t.reader, k);
 
-let wakeup_reader = t => {
-  let f = t.wakeup_reader;
-  t.wakeup_reader = default_wakeup;
-  f();
-};
+let wakeup_reader = t => Reader.wakeup(t.reader);
 
-let on_wakeup_writer = (t, k) =>
-  if (is_closed(t)) {
-    failwith("on_wakeup_writer on closed conn");
-  } else if (!(t.wakeup_writer === default_wakeup)) {
-    failwith("yield_writer: only one callback can be registered at a time");
-  } else {
-    t.wakeup_writer = k;
-  };
+let yield_writer = (t, k) => Writer.on_wakeup(t.writer, k);
 
-let wakeup_writer = t => {
-  let f = t.wakeup_writer;
-  t.wakeup_writer = default_wakeup;
-  f();
-};
-
-let transfer_writer_callback = (t, reqd) =>
-  /* Note: it's important that we don't call `Reqd.on_more_output_available` if
-   * no `wakeup_writer` callback has been registered. In the current
-   * implementation, `Reqd` performs its own bookkeeping by performing its own
-   * physical equality check. If `Server_connection` registers its dummy
-   * callback, `Reqd`'s physical equality check with _its own_ dummy callback
-   * will fail and cause weird bugs. */
-  if (!(t.wakeup_writer === default_wakeup)) {
-    let f = t.wakeup_writer;
-    t.wakeup_writer = default_wakeup;
-    Reqd.on_more_output_available(reqd, f);
-  };
+let wakeup_writer = t => Writer.wakeup(t.writer);
 
 let default_error_handler = (~request as _=?, error, handle) => {
   let message =
@@ -161,9 +129,7 @@ let create =
     request_handler,
     error_handler,
     request_queue,
-    wakeup_writer: default_wakeup,
-    wakeup_reader: default_wakeup,
-    error_code: `Ok,
+    error_code: No_error,
   };
 };
 
@@ -193,6 +159,8 @@ let error_code = t =>
   };
 
 let shutdown = t => {
+  Queue.iter(Reqd.close_request_body, t.request_queue);
+  Queue.clear(t.request_queue);
   shutdown_reader(t);
   shutdown_writer(t);
   wakeup_reader(t);
@@ -214,79 +182,118 @@ let set_error_and_handle = (~request=?, t, error) =>
     shutdown_reader(t);
     let writer = t.writer;
     switch (t.error_code) {
-    | `Ok =>
-      let body = Body.of_faraday(Writer.faraday(writer));
-      t.error_code = `Error(body);
+    | No_error =>
+      /* The (shared) response body buffer can be used in this case because in
+       * this conditional branch we're not sending a response
+       * (is_active t == false), and are therefore not making use of that
+       * buffer. */
+      let response_body =
+        Body.create(
+          t.response_body_buffer,
+          Optional_thunk.some(() => wakeup_writer(t)),
+        );
+
+      t.error_code = Error({request, response_state: Waiting});
       t.error_handler(
         ~request?,
         error,
         headers => {
-          Writer.write_response(writer, Response.create(~headers, status));
+          let response = Response.create(~headers, status);
+          Writer.write_response(writer, response);
+          t.error_code =
+            Error({
+              request,
+              response_state:
+                [@implicit_arity] Streaming(response, response_body),
+            });
           wakeup_writer(t);
-          body;
+          response_body;
         },
       );
-    | `Error(_) =>
-      /* This should not happen. Even if we try to read more, the parser does
-       * not ingest it, and even if someone attempts to feed more bytes to the
-       * server when we already told them to [`Close], it's not really our
-       * problem. */
-      assert(false)
+    | Error(_) =>
+      /* When reading, this should be impossible: even if we try to read more,
+       * the parser does not ingest it, and even if someone attempts to feed
+       * more bytes to the parser when we already told them to [`Close], that's
+       * really their own fault.
+       *
+       * We do, however, need to handle this case if any other exception is
+       * reported (we're already handling an error and e.g. the writing channel
+       * is closed). Just shut down the connection in that case.
+       */
+      Writer.close_and_drain(t.writer);
+      shutdown(t);
     };
   };
 
 let report_exn = (t, exn) => set_error_and_handle(t, `Exn(exn));
 
-let advance_request_queue_if_necessary = t =>
-  if (is_active(t)) {
-    let reqd = current_reqd_exn(t);
-    if (Reqd.persistent_connection(reqd)) {
-      if (Reqd.is_complete(reqd)) {
-        ignore(Queue.take(t.request_queue));
-        if (!Queue.is_empty(t.request_queue)) {
-          t.request_handler(current_reqd_exn(t));
-        };
-        wakeup_reader(t);
-      };
-    } else {
-      ignore(Queue.take(t.request_queue));
-      Queue.iter(Reqd.close_request_body, t.request_queue);
-      Queue.clear(t.request_queue);
-      Queue.push(reqd, t.request_queue);
-      wakeup_writer(t);
-      if (Reqd.is_complete(reqd)) {
-        shutdown(t);
-      } else if (!Reqd.requires_input(reqd)) {
-        shutdown_reader(t);
-      };
-    };
-  } else if (Reader.is_failed(t.reader)) {
-    /* Don't tear down the whole connection if we saw an unrecoverable parsing
-     * error, as we might be in the process of streaming back the error
-     * response body to the client. */
-    shutdown_reader(
-      t,
-    );
-  } else if (Reader.is_closed(t.reader)) {
-    shutdown(t);
-  };
-
-let _next_read_operation = t => {
-  advance_request_queue_if_necessary(t);
-  if (is_active(t)) {
-    let reqd = current_reqd_exn(t);
-    if (Reqd.requires_input(reqd)) {
-      Reader.next(t.reader);
-    } else if (Reqd.persistent_connection(reqd)) {
-      `Yield;
-    } else {
-      shutdown_reader(t);
-      Reader.next(t.reader);
-    };
-  } else {
-    Reader.next(t.reader);
+let advance_request_queue = t => {
+  ignore(Queue.take(t.request_queue));
+  if (!Queue.is_empty(t.request_queue)) {
+    t.request_handler(Queue.peek(t.request_queue));
   };
 };
+
+let rec _next_read_operation = t =>
+  if (!is_active(t)) {
+    let next = Reader.next(t.reader);
+    switch (next) {
+    | `Error(_) =>
+      /* Don't tear down the whole connection if we saw an unrecoverable
+       * parsing error, as we might be in the process of streaming back the
+       * error response body to the client. */
+      shutdown_reader(t)
+    | `Close => shutdown(t)
+    | _ => ()
+    };
+    next;
+  } else {
+    let reqd = current_reqd_exn(t);
+    switch (Reqd.input_state(reqd)) {
+    | Wait =>
+      /* `Wait` signals that we should add backpressure to the read channel,
+       * meaning the reader should tell the runtime to yield.
+       *
+       * The exception here is if there has been an error in the parser; in
+       * that case, we need to return that exception and signal the runtime to
+       * close. */
+      switch (Reader.next(t.reader)) {
+      | `Error(_) as operation => operation
+      | _ => `Yield
+      }
+    | Ready => Reader.next(t.reader)
+    | Complete => _final_read_operation_for(t, reqd)
+    };
+  }
+
+and _final_read_operation_for = (t, reqd) =>
+  if (Reader.is_closed(t.reader) || !Reqd.persistent_connection(reqd)) {
+    shutdown_reader(t);
+    Reader.next(t.reader);
+  } else {
+    switch (Reqd.output_state(reqd)) {
+    | Waiting
+    | Ready => `Yield
+    | Complete =>
+      /* The "final read" operation for a request descriptor that is
+       * `Complete` from both input and output perspectives needs to account
+       * for the fact that the reader may not have finished reading the
+       * request body.
+       * It's important that we don't advance the request queue in this case
+       * for persistent connections, or we'd break the invariant that a
+       * non-empty `request_queue` has had the request handler called on its
+       * head element. */
+      switch (Reader.next(t.reader)) {
+      | (`Error(_) | `Read) as operation =>
+        /* Keep reading when in a "partial" state (`Read).
+         * Don't advance the request queue if in an error state. */
+        operation
+      | _ =>
+        advance_request_queue(t);
+        _next_read_operation(t);
+      }
+    };
+  };
 
 let next_read_operation = t =>
   switch (_next_read_operation(t)) {
@@ -296,16 +303,9 @@ let next_read_operation = t =>
   | `Error(`Bad_request(request)) =>
     set_error_and_handle(~request, t, `Bad_request);
     `Close;
-  | (`Read | `Yield | `Close) as operation =>
-    if (is_active(t)) {
-      let reqd = current_reqd_exn(t);
-      switch (Reqd.upgrade_handler(reqd)) {
-      | Some(_) => `Upgrade
-      | None => operation
-      };
-    } else {
-      operation;
-    }
+  | `Start
+  | `Read => `Read
+  | (`Yield | `Close) as operation => operation
   };
 
 let read_with_more = (t, bs, ~off, ~len, more) => {
@@ -314,7 +314,6 @@ let read_with_more = (t, bs, ~off, ~len, more) => {
   if (is_active(t)) {
     let reqd = current_reqd_exn(t);
     if (call_handler) {
-      transfer_writer_callback(t, reqd);
       t.request_handler(reqd);
     };
     Reqd.flush_request_body(reqd);
@@ -328,49 +327,95 @@ let read = (t, bs, ~off, ~len) =>
 let read_eof = (t, bs, ~off, ~len) =>
   read_with_more(t, bs, ~off, ~len, Complete);
 
-let flush_response_body = t =>
-  if (is_active(t)) {
-    let reqd = current_reqd_exn(t);
-    Reqd.flush_response_body(reqd);
-  };
+let flush_response_error_body = (t, ~request=?, response_state) => {
+  let request_method =
+    switch (request) {
+    | Some({Request.meth, _}) => meth
+    | None =>
+      /* XXX(anmonteiro): Error responses may not have a request method if they
+       * are the result of e.g. an EOF error. Assuming that the request method
+       * is `GET` smells a little because it's exposing implementation details,
+       * though the only case where it'd matter would be potentially assuming
+       * the _successful_ response to a CONNECT request and sending one of the
+       * forbidden headers according to RFC7231§4.3.6:
+       *
+       *   A server MUST NOT send any Transfer-Encoding or Content-Length
+       *   header fields in a 2xx (Successful) response to CONNECT.
+       *
+       * If we're running this code, however, we're not responding with a
+       * successful status code, which makes us compliant to the above. */
+      `GET
+    };
 
-let next_write_operation = t => {
-  advance_request_queue_if_necessary(t);
-  if (is_active(t)) {
-    let reqd = current_reqd_exn(t);
-    Reqd.flush_response_body(reqd);
-    switch (Writer.next(t.writer)) {
-    | `Write(iovecs) as write_op =>
-      switch (Reqd.upgrade_handler(reqd)) {
-      | Some(upgrade) => `Upgrade((iovecs, upgrade))
-      | None => write_op
+  Response_state.flush_response_body(
+    response_state,
+    ~request_method,
+    t.writer,
+  );
+};
+
+let rec _next_write_operation = t =>
+  if (!is_active(t)) {
+    switch (t.error_code) {
+    | No_error =>
+      if (Reader.is_closed(t.reader)) {
+        shutdown(t);
+      };
+      Writer.next(t.writer);
+    | Error({request, response_state}) =>
+      switch (Response_state.output_state(response_state)) {
+      | Waiting => `Yield
+      | Ready =>
+        flush_response_error_body(t, ~request?, response_state);
+        Writer.next(t.writer);
+      | Complete =>
+        shutdown_writer(t);
+        Writer.next(t.writer);
       }
-    | operation => operation
     };
   } else {
-    Writer.next(t.writer);
-  };
+    let reqd = current_reqd_exn(t);
+    switch (Reqd.output_state(reqd)) {
+    | Waiting => `Yield
+    | Ready =>
+      Reqd.flush_response_body(reqd);
+      Writer.next(t.writer);
+    | Complete => _final_write_operation_for(t, reqd)
+    };
+  }
+
+and _final_write_operation_for = (t, reqd) => {
+  let next =
+    if (!Reqd.persistent_connection(reqd)) {
+      shutdown_writer(t);
+      Writer.next(t.writer);
+    } else {
+      switch (Reqd.input_state(reqd)) {
+      | Wait
+      | Ready =>
+        /* If we're done sending a response in a persistent connection, but the
+         * reader hasn't yet ingested the entire request body, we need to
+         * signal that the "input state" for this request descriptor has been
+         * completed by closing the request body (not interested in ingesting
+         * more request body data). */
+        Reqd.close_request_body(reqd);
+        Writer.next(t.writer);
+      | Complete =>
+        switch (Reader.next(t.reader)) {
+        | `Error(_)
+        | `Read => Writer.next(t.writer)
+        | _ =>
+          advance_request_queue(t);
+          _next_write_operation(t);
+        }
+      };
+    };
+
+  wakeup_reader(t);
+  next;
 };
+
+let next_write_operation = t => _next_write_operation(t);
 
 let report_write_result = (t, result) =>
   Writer.report_result(t.writer, result);
-
-let yield_writer = (t, k) =>
-  if (is_active(t)) {
-    let reqd = current_reqd_exn(t);
-    if (Reqd.requires_output(reqd)) {
-      Reqd.on_more_output_available(reqd, k);
-    } else if (Reqd.persistent_connection(reqd)) {
-      on_wakeup_writer(t, k);
-    } else {
-      shutdown(t);
-      k();
-    };
-  } else if (Writer.is_closed(t.writer)) {
-    k();
-  } else {
-    switch (t.error_code) {
-    | `Ok => on_wakeup_writer(t, k)
-    | `Error(body) => Body.when_ready_to_write(body, k)
-    };
-  };

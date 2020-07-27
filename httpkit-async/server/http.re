@@ -15,6 +15,9 @@ type error_handler =
   ) =>
   unit;
 
+let sha1 = s =>
+  s |> Digestif.SHA1.digest_string |> Digestif.SHA1.to_raw_string;
+
   let read_body =
     reqd => {
         let req = reqd |> Zillaml.Reqd.request;
@@ -147,7 +150,13 @@ type error_handler =
     let error_handler = (wsd, `Exn(exn)) => {
       let message = Exn.to_string(exn);
       let payload = Bytes.of_string(message);
-      Websocketzilla.Wsd.send_bytes(wsd, ~kind=`Text, payload, ~off=0, ~len=Bytes.length(payload));
+      Websocketzilla.Wsd.send_bytes(
+        wsd,
+        ~kind=`Text,
+        payload,
+        ~off=0,
+        ~len=Bytes.length(payload),
+      );
       Websocketzilla.Wsd.close(wsd);
     };
     let http_error_handler = (_client_address, ~request as _=?, error, handle) => {
@@ -160,30 +169,39 @@ type error_handler =
       Body.write_string(body, message);
       Body.close_writer(body);
     };
-    let upgrade_handler = (req: Zillaml.Request.t, addr, socket) =>
-      Websocketzilla_async.Server.create_upgraded_connection_handler(
-        ~error_handler,
-        ~websocket_handler=websocket_handler(req),
-        addr,
-        socket
-      );
-    let request_handler = (addr, reqd) => {
+    let upgrade_handler = (req, addr, upgrade, ()) => {
+      let ws_conn =
+        Websocketzilla.Server_connection.create_websocket(
+          ~error_handler,
+          websocket_handler(req, addr),
+        );
+
+      upgrade(Gluten.make((module Websocketzilla.Server_connection), ws_conn));
+    };
+    let request_handler = (addr, reqd: Gluten.Reqd.t(Zillaml.Reqd.t)) => {
+      let {Gluten.Reqd.reqd, upgrade} = reqd;
       let req = Zillaml.Reqd.request(reqd);
       let io_handler = {
           switch%bind(check_request(req)) {
-          | true => Websocketzilla_async.Server.respond_with_upgrade(reqd, upgrade_handler(req, addr))
-              >>| (
-                fun
-                | Ok () => ()
-                | Error(err_str) => {
-                    let response =
-                      Response.create(
-                        ~headers=Zillaml.Headers.of_list([("Connection", "close")]),
-                        `Bad_request
-                      );
-                    Reqd.respond_with_string(reqd, response, err_str);
-                  }
+          | true => 
+            switch (
+              Websocketzilla.Handshake.respond_with_upgrade(
+                ~sha1, 
+                reqd, 
+                upgrade_handler(req, addr, upgrade)
               )
+            ) {
+            | Ok () => Deferred.return()
+            | Error(err_str) => {
+                let response =
+                  Response.create(
+                    ~headers=Zillaml.Headers.of_list([("Connection", "close")]),
+                    `Bad_request
+                  );
+                Reqd.respond_with_string(reqd, response, err_str);
+                Deferred.return()
+              }
+            }
           | false =>
                   Deferred.return(create_respond(reqd, ~status=`Forbidden, ~headers=None, "403 Forbidden"))
           }
@@ -203,7 +221,8 @@ type error_handler =
 
   let create_server = (~port, ~on_start, ~max_accepts_per_batch, ~router, ~error_handler, ~reqlogger) => {
     let request_handler =
-      (_conn, reqd) => {
+      (_conn, reqd: Gluten.Reqd.t(Zillaml.Reqd.t)) => {
+        let {Gluten.Reqd.reqd, _} = reqd;
         let req = Zillaml.Reqd.request(reqd);
         let res = create_respond(reqd);
         switch reqlogger {
@@ -265,7 +284,7 @@ let create_server_with_web_sockets = (~port, ~on_start, ~max_accepts_per_batch, 
           Websocketzilla.Wsd.schedule(wsd, bs, ~kind=`Text, ~off=0, ~len= String.length(str))
         }
       }
-      and t = lazy(on_ws_connect({  Websocket_async.wsd, send, id: random_int32(), path: get_path(req), query: get_query(req) }))
+      and t = lazy(on_ws_connect({  Websocket_async.wsd, send, id: random_int32(), path: get_path(req), query: get_query(req)}))
       let { Websocket_async.on_message, on_close } = Lazy.force(t);
       let finalise_content = (accum_content) => String.concat(List.rev(accum_content));
       let frame = (~opcode, ~is_fin, bs, ~off, ~len) =>
@@ -317,7 +336,13 @@ let create_server_with_web_sockets = (~port, ~on_start, ~max_accepts_per_batch, 
     let error_handler = (wsd, `Exn(exn)) => {
       let message = Exn.to_string(exn);
       let payload = Bytes.of_string(message);
-      Websocketzilla.Wsd.send_bytes(wsd, ~kind=`Text, payload, ~off=0, ~len=Bytes.length(payload));
+      Websocketzilla.Wsd.send_bytes(
+        wsd,
+        ~kind=`Text,
+        payload,
+        ~off=0,
+        ~len=Bytes.length(payload),
+      );
       Websocketzilla.Wsd.close(wsd);
     };
     let http_error_handler = (_client_address, ~request as _=?, error, handle) => {
@@ -330,13 +355,15 @@ let create_server_with_web_sockets = (~port, ~on_start, ~max_accepts_per_batch, 
       Body.write_string(body, message);
       Body.close_writer(body);
     };
-    let upgrade_handler = (req: Zillaml.Request.t, addr, socket) =>
-      Websocketzilla_async.Server.create_upgraded_connection_handler(
-        ~error_handler,
-        ~websocket_handler=websocket_handler(req),
-        addr,
-        socket
-      );
+    let upgrade_handler = (req, addr, upgrade, ()) => {
+      let ws_conn =
+        Websocketzilla.Server_connection.create_websocket(
+          ~error_handler,
+          websocket_handler(req, addr),
+        );
+
+      upgrade(Gluten.make((module Websocketzilla.Server_connection), ws_conn));
+    };
     let http_request_handler = (_conn, reqd) => {
       let req = Zillaml.Reqd.request(reqd);
       let res = create_respond(reqd);
@@ -372,23 +399,30 @@ let create_server_with_web_sockets = (~port, ~on_start, ~max_accepts_per_batch, 
       |> Deferred.don't_wait_for;
     };
 
-    let request_handler = (addr, reqd) => {
+    let request_handler = (addr, reqd: Gluten.Reqd.t(Zillaml.Reqd.t)) => {
+      let {Gluten.Reqd.reqd, upgrade} = reqd;
       let req = Zillaml.Reqd.request(reqd);
       let io_handler = {
           switch%bind(check_for_websocket_request(req)) {
-          | true => Websocketzilla_async.Server.respond_with_upgrade(reqd, upgrade_handler(req, addr))
-              >>| (
-                fun
-                | Ok () => ()
-                | Error(err_str) => {
-                    let response =
-                      Response.create(
-                        ~headers=Zillaml.Headers.of_list([("Connection", "close")]),
-                        `Bad_request
-                      );
-                    Reqd.respond_with_string(reqd, response, err_str);
-                  }
+          | true => 
+            switch (
+              Websocketzilla.Handshake.respond_with_upgrade(
+                ~sha1, 
+                reqd, 
+                upgrade_handler(req, addr, upgrade)
               )
+            ) {
+            | Ok () => Deferred.return()
+            | Error(err_str) => {
+                let response =
+                  Response.create(
+                    ~headers=Zillaml.Headers.of_list([("Connection", "close")]),
+                    `Bad_request
+                  );
+                Reqd.respond_with_string(reqd, response, err_str);
+                Deferred.return()
+              }
+            }
           | false =>
                   Deferred.return(http_request_handler(addr, reqd))
           }

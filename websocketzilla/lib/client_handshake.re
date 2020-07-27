@@ -5,8 +5,9 @@ type t = {
   body: Zillaml.Body.t([ | `write]),
 };
 
+/* TODO: yet another argument, `~config` */
 let create = (~nonce, ~headers, ~error_handler, ~response_handler, target) => {
-  let connection = Zillaml.Client_connection.create(~config=?None, ());
+  let connection = Zillaml.Client_connection.create(~config=?None);
   let body =
     Zillaml.Client_connection.request(
       connection,
@@ -33,4 +34,12 @@ let report_write_result = t =>
 
 let yield_writer = t => Zillaml.Client_connection.yield_writer(t.connection);
 
-let close = t => Zillaml.Body.close_writer(t.body);
+let report_exn = (t, exn) =>
+  Zillaml.Client_connection.report_exn(t.connection, exn);
+
+let is_closed = t => Zillaml.Client_connection.is_closed(t.connection);
+
+let close = t => {
+  Zillaml.Body.close_writer(t.body);
+  Zillaml.Client_connection.shutdown(t.connection);
+};

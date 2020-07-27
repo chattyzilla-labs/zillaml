@@ -686,13 +686,20 @@ module IOVec: {
 /** {2 Request Descriptor} */
 
 module Reqd: {
-  type t('handle, 'io);
+  type t;
 
-  let request: t(_) => Request.t;
-  let request_body: t(_) => Body.t([ | `read]);
+  type error = [
+    | `Bad_request
+    | `Bad_gateway
+    | `Internal_server_error
+    | `Exn(exn)
+  ];
 
-  let response: t(_) => option(Response.t);
-  let response_exn: t(_) => Response.t;
+  let request: t => Request.t;
+  let request_body: t => Body.t([ | `read]);
+
+  let response: t => option(Response.t);
+  let response_exn: t => Response.t;
 
   /** Responding
 
@@ -704,17 +711,17 @@ module Reqd: {
       See {{:https://tools.ietf.org/html/rfc7230#section-6.3} RFC7230§6.3} for
       more details. */;
 
-  let respond_with_string: (t(_), Response.t, string) => unit;
-  let respond_with_bigstring: (t(_), Response.t, Bigstringaf.t) => unit;
+  let respond_with_string: (t, Response.t, string) => unit;
+  let respond_with_bigstring: (t, Response.t, Bigstringaf.t) => unit;
   let respond_with_streaming:
-    (~flush_headers_immediately: bool=?, t(_), Response.t) =>
-    Body.t([ | `write]);
-  let respond_with_upgrade: (t('fd, 'io), Headers.t, 'fd => 'io) => unit;
+    (~flush_headers_immediately: bool=?, t, Response.t) => Body.t([ | `write]);
+  let respond_with_upgrade: (t, Headers.t, unit => unit) => unit;
 
   /** {3 Exception Handling} */;
 
-  let report_exn: (t(_), exn) => unit;
-  let try_with: (t(_), unit => unit) => result(unit, exn);
+  let error_code: t => option(error);
+  let report_exn: (t, exn) => unit;
+  let try_with: (t, unit => unit) => result(unit, exn);
 };
 
 /** {2 Buffer Size Configuration} */
@@ -740,16 +747,11 @@ module Config: {
 /** {2 Server Connection} */;
 
 module Server_connection: {
-  type t('fd, 'io);
+  type t;
 
-  type error = [
-    | `Bad_request
-    | `Bad_gateway
-    | `Internal_server_error
-    | `Exn(exn)
-  ];
+  type error = Reqd.error;
 
-  type request_handler('fd, 'io) = Reqd.t('fd, 'io) => unit;
+  type request_handler = Reqd.t => unit;
 
   type error_handler =
     (~request: Request.t=?, error, Headers.t => Body.t([ | `write])) => unit;
@@ -758,17 +760,13 @@ module Server_connection: {
       handler that will service individual requests with [request_handler]. */
 
   let create:
-    (
-      ~config: Config.t=?,
-      ~error_handler: error_handler=?,
-      request_handler('fd, 'io)
-    ) =>
-    t('fd, 'io);
+    (~config: Config.t=?, ~error_handler: error_handler=?, request_handler) =>
+    t;
 
   /** [next_read_operation t] returns a value describing the next operation
       that the caller should conduct on behalf of the connection. */
 
-  let next_read_operation: t(_) => [ | `Read | `Yield | `Close | `Upgrade];
+  let next_read_operation: t => [ | `Read | `Yield | `Close];
 
   /** [read t bigstring ~off ~len] reads bytes of input from the provided range
       of [bigstring] and returns the number of bytes consumed by the
@@ -776,7 +774,7 @@ module Server_connection: {
       returns a [`Read] value and additional input is available for the
       connection to consume. */
 
-  let read: (t(_), Bigstringaf.t, ~off: int, ~len: int) => int;
+  let read: (t, Bigstringaf.t, ~off: int, ~len: int) => int;
 
   /** [read_eof t bigstring ~off ~len] reads bytes of input from the provided
       range of [bigstring] and returns the number of bytes consumed by the
@@ -785,28 +783,19 @@ module Server_connection: {
       channel. The connection will attempt to consume any buffered input and
       then shutdown the HTTP parser for the connection. */
 
-  let read_eof: (t(_), Bigstringaf.t, ~off: int, ~len: int) => int;
+  let read_eof: (t, Bigstringaf.t, ~off: int, ~len: int) => int;
 
   /** [yield_reader t continue] registers with the connection to call
       [continue] when reading should resume. {!yield_reader} should be called
       after {next_read_operation} returns a [`Yield] value. */
 
-  let yield_reader: (t(_), unit => unit) => unit;
+  let yield_reader: (t, unit => unit) => unit;
 
   /** [next_write_operation t] returns a value describing the next operation
-      that the caller should conduct on behalf of the connection.
-      In the case of [`Upgrade], it is the responsibility of the caller to
-      guarantee that the upgrade callback is called only once; the function
-      will keep returning [`Upgrade] if called again. */
+      that the caller should conduct on behalf of the connection. */
 
   let next_write_operation:
-    t('fd, 'io) =>
-    [
-      | `Write(list(IOVec.t(Bigstringaf.t)))
-      | `Upgrade(list(IOVec.t(Bigstringaf.t)), 'fd => 'io)
-      | `Yield
-      | `Close(int)
-    ];
+    t => [ | `Write(list(IOVec.t(Bigstringaf.t))) | `Yield | `Close(int)];
 
   /** [report_write_result t result] reports the result of the latest write
       attempt to the connection. {report_write_result} should be called after a
@@ -819,36 +808,36 @@ module Server_connection: {
         {- [`Closed] indicates that the output destination will no longer
         accept bytes from the write processor. }} */
 
-  let report_write_result: (t(_), [ | `Ok(int) | `Closed]) => unit;
+  let report_write_result: (t, [ | `Ok(int) | `Closed]) => unit;
 
   /** [yield_writer t continue] registers with the connection to call
       [continue] when writing should resume. {!yield_writer} should be called
       after {next_write_operation} returns a [`Yield] value. */
 
-  let yield_writer: (t(_), unit => unit) => unit;
+  let yield_writer: (t, unit => unit) => unit;
 
   /** [report_exn t exn] reports that an error [exn] has been caught and
       that it has been attributed to [t]. Calling this function will switch [t]
       into an error state. Depending on the state [t] is transitioning from, it
       may call its error handler before terminating the connection. */
 
-  let report_exn: (t(_), exn) => unit;
+  let report_exn: (t, exn) => unit;
 
   /** [is_closed t] is [true] if both the read and write processors have been
       shutdown. When this is the case {!next_read_operation} will return
       [`Close _] and {!next_write_operation} will return [`Write _] until all
       buffered output has been flushed. */
 
-  let is_closed: t(_) => bool;
+  let is_closed: t => bool;
 
   /** [error_code t] returns the [error_code] that caused the connection to
       close, if one exists. */
 
-  let error_code: t(_) => option(error);
+  let error_code: t => option(error);
 
-  /**/
-  let shutdown: t(_) => unit;
-  /**/
+
+  let shutdown: t => unit;
+
 };
 
 /** {2 Client Connection} */;
@@ -866,7 +855,7 @@ module Client_connection: {
 
   type error_handler = error => unit;
 
-  let create: (~config: Config.t=?, unit) => t;
+  let create: (~config: Config.t=?) => t;
 
   let request:
     (
@@ -947,8 +936,14 @@ module Client_connection: {
   let shutdown: t => unit;
 };
 
+/**/
 
 module Zillaml_private: {
+  module Parse: {
+    let request: Angstrom.t(Request.t);
+    let response: Angstrom.t(Response.t);
+  };
+
   module Serialize: {
     let write_request: (Faraday.t, Request.t) => unit;
     let write_response: (Faraday.t, Response.t) => unit;

@@ -13,5 +13,6 @@ module Server_connection = Server_connection;
 module Client_connection = Client_connection;
 
 module Zillaml_private = {
+  module Parse = Parse;
   module Serialize = Serialize;
 };

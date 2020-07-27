@@ -167,18 +167,14 @@ let header =
     take_till(P.is_space_or_colon) <* char(':') <* spaces,
     take_till(P.is_cr) <* eol >>| String.trim,
   )
+  <* commit
   <?> "header";
 
-let headers =
+let headers = {
+  let cons = (x, xs) => [x, ...xs];
   fix(headers => {
-    let _emp = return(x => x);
-    let _rec =
-      lift2(
-        (header, f, headers) => f([header, ...headers]),
-        header,
-        headers,
-      );
-
+    let _emp = return([]);
+    let _rec = lift2(cons, header, headers);
     peek_char_fail
     >>= (
       fun
@@ -186,7 +182,8 @@ let headers =
       | _ => _rec
     );
   })
-  >>| (f => f([]));
+  >>| Headers.of_list;
+};
 
 let request = {
   let meth = take_till(P.is_space) >>| Method.of_string;
@@ -201,7 +198,19 @@ let request = {
 };
 
 let response = {
-  let status = take_till(P.is_space) >>| Status.of_string;
+  let status =
+    take_while(P.is_digit)
+    >>= (
+      str =>
+        if (String.length(str) == 0) {
+          fail("status-code empty");
+        } else if (String.length(str) > 3) {
+          fail(Printf.sprintf("status-code too long: %S", str));
+        } else {
+          return(Status.of_string(str));
+        }
+    );
+
   lift4(
     (version, status, reason, headers) =>
       Response.create(~reason, ~version, ~headers, status),
@@ -240,7 +249,7 @@ let body = (~encoding, writer) => {
       at_end_of_input
       >>= (
         fun
-        | true => finish(writer) *> fail(unexpected)
+        | true => commit *> fail(unexpected)
         | false =>
           available
           >>= (
@@ -324,20 +333,44 @@ module Reader = {
     mutable parse_state:
       parse_state('error),
       /* The state of the parse for the current request */
-    mutable closed: bool,
-    /* Whether the input source has left the building, indicating that no
-     * further input will be received. */
+    mutable closed:
+      bool,
+      /* Whether the input source has left the building, indicating that no
+       * further input will be received. */
+    mutable wakeup: Optional_thunk.t,
   };
 
   type request = t(request_error);
   type response = t(response_error);
 
-  let create = parser => {parser, parse_state: Done, closed: false};
+  let create = parser => {
+    parser,
+    parse_state: Done,
+    closed: false,
+    wakeup: Optional_thunk.none,
+  };
 
   let ok = return(Ok());
 
+  let is_closed = t => t.closed;
+
+  let on_wakeup = (t, k) =>
+    if (is_closed(t)) {
+      failwith("on_wakeup on closed reader");
+    } else if (Optional_thunk.is_some(t.wakeup)) {
+      failwith("on_wakeup: only one callback can be registered at a time");
+    } else {
+      t.wakeup = Optional_thunk.some(k);
+    };
+
+  let wakeup = t => {
+    let f = t.wakeup;
+    t.wakeup = Optional_thunk.none;
+    Optional_thunk.call_if_some(f);
+  };
+
   let request = handler => {
-    let parser =
+    let parser = (t, handler) =>
       request
       <* commit
       >>= (
@@ -348,25 +381,29 @@ module Reader = {
             handler(request, Body.empty);
             ok;
           | (`Fixed(_) | `Chunked | `Close_delimited) as encoding =>
-            let request_body = Body.create(Bigstringaf.empty);
+            let request_body =
+              Body.create(
+                Bigstringaf.empty,
+                Optional_thunk.some(() => wakeup(Lazy.force(t))),
+              );
+
             handler(request, request_body);
             body(~encoding, request_body) *> ok;
           }
       );
 
-    create(parser);
+    let rec t = lazy(create(parser(t, handler)));
+    Lazy.force(t);
   };
 
-  exception Local(Respd.t);
-
   let response = request_queue => {
-    let parser =
+    let parser = (t, request_queue) =>
       response
       <* commit
       >>= (
         response => {
           assert(!Queue.is_empty(request_queue));
-
+          exception Local(Respd.t);
           let respd =
             switch (
               Queue.iter(
@@ -395,28 +432,25 @@ module Reader = {
             respd.response_handler(response, Body.empty);
             ok;
           | (`Fixed(_) | `Chunked | `Close_delimited) as encoding =>
-            let response_body = Body.create(Bigstringaf.empty);
+            let response_body =
+              Body.create(
+                Bigstringaf.empty,
+                Optional_thunk.some(() => wakeup(Lazy.force(t))),
+              );
+
             respd.response_handler(response, response_body);
             body(~encoding, response_body) *> ok;
           };
         }
       );
 
-    create(parser);
+    let rec t = lazy(create(parser(t, request_queue)));
+    Lazy.force(t);
   };
-
-  let is_closed = t => t.closed;
-
-  let is_failed = t =>
-    switch (t.parse_state) {
-    | Fail(_) => true
-    | _ => false
-    };
 
   let transition = (t, state) =>
     switch (state) {
-    | AU.Done(consumed, Ok ())
-    | AU.Fail(0 as consumed, _, _) =>
+    | AU.Done(consumed, Ok ()) =>
       t.parse_state = Done;
       consumed;
     | AU.Done(consumed, Error(error)) =>
@@ -440,6 +474,11 @@ module Reader = {
     };
 
   let rec read_with_more = (t, bs, ~off, ~len, more) => {
+    let initial =
+      switch (t.parse_state) {
+      | Done => true
+      | _ => false
+      };
     let consumed =
       switch (t.parse_state) {
       | Fail(_) => 0
@@ -449,6 +488,12 @@ module Reader = {
       | Partial(continue) => transition(t, continue(bs, more, ~off, ~len))
       };
 
+    /* Special case where the parser just started and was fed a zero-length
+     * bigstring. Avoid putting them parser in an error state in this scenario.
+     * If we were already in a `Partial` state, return the error. */
+    if (initial && len == 0) {
+      t.parse_state = Done;
+    };
     switch (more) {
     | Complete => t.closed = true
     | Incomplete => ()
@@ -456,20 +501,13 @@ module Reader = {
     consumed;
   };
 
-  let force_close = t =>
-    ignore(
-      read_with_more(t, Bigstringaf.empty, ~off=0, ~len=0, Complete): int,
-    );
+  let force_close = t => t.closed = true;
 
   let next = t =>
     switch (t.parse_state) {
-    | Done =>
-      if (t.closed) {
-        `Close;
-      } else {
-        `Read;
-      }
     | Fail(failure) => `Error(failure)
+    | _ when t.closed => `Close
+    | Done => `Start
     | Partial(_) => `Read
     };
 };

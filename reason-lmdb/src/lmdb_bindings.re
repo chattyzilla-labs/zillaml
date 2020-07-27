@@ -1,7 +1,7 @@
 exception Exists;
 exception Map_full;
 exception Error(int);
-
+//https://github.com/erthink/libmdbx/blob/master/mdbx.h
 /* return codes */
 external strerror: int => string = "mdbs_strerror";
 

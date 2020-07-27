@@ -1,7 +1,8 @@
 /*----------------------------------------------------------------------------
     Copyright (c) 2018 Inhabited Type LLC.
     Copyright (c) 2019 António Nuno Monteiro
-    Copyright (c) 2020 Dakota Murphy
+    Copyright (c) 2019 Dakota Murphy
+    
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -32,12 +33,6 @@
     POSSIBILITY OF SUCH DAMAGE.
   ----------------------------------------------------------------------------*/
 
-module type IO = Zillaml_async_intf.IO;
-
-module type Server = Zillaml_async_intf.Server;
-
-module type Client = Zillaml_async_intf.Client;
-
 open Async;
 
 open Zillaml;
@@ -45,26 +40,23 @@ open Zillaml;
 module Server: {
   include
     Zillaml_async_intf.Server with
-      type socket = Socket.t([ | `Active], Socket.Address.Inet.t) and
+      type socket := Socket.t([ | `Active], Socket.Address.Inet.t) and
       type addr := Socket.Address.Inet.t;
 
   module SSL: {
     include
       Zillaml_async_intf.Server with
-        type socket = Ssl_io.descriptor and type addr := Socket.Address.t;
+        type socket := Gluten_async.Server.SSL.socket and
+        type addr := Socket.Address.Inet.t;
 
     let create_connection_handler_with_default:
       (
         ~certfile: string,
         ~keyfile: string,
         ~config: Config.t=?,
-        ~request_handler: 'a =>
-                          Server_connection.request_handler(
-                            Ssl_io.descriptor,
-                            Deferred.t(unit),
-                          ),
+        ~request_handler: 'a => Gluten.Server.request_handler(Zillaml.Reqd.t),
         ~error_handler: 'a => Server_connection.error_handler,
-        [< Socket.Address.t] as 'a,
+        Socket.Address.Inet.t as 'a,
         Socket.t([ | `Active], 'a)
       ) =>
       Deferred.t(unit);
@@ -77,10 +69,15 @@ module Client: {
       type socket = Socket.t([ | `Active], Socket.Address.Inet.t);
 
   module SSL: {
-    include Zillaml_async_intf.Client with type socket = Ssl_io.descriptor;
+    include
+      Zillaml_async_intf.Client with
+        type socket = Gluten_async.Client.SSL.socket;
 
     let create_connection_with_default:
-      (~config: Config.t=?, Socket.t([ | `Active], [< Socket.Address.t])) =>
+      (
+        ~config: Config.t=?,
+        Socket.t([ | `Active], [< Socket.Address.Inet.t])
+      ) =>
       Deferred.t(t);
   };
 };

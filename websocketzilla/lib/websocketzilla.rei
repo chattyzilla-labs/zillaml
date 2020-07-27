@@ -1,6 +1,6 @@
-module Wsd: {
-  module IOVec = Zillaml.IOVec;
+module IOVec = Zillaml.IOVec;
 
+module Wsd: {
   type mode = [ | `Client(unit => int32) | `Server];
 
   type t;
@@ -8,11 +8,24 @@ module Wsd: {
   let create: mode => t;
 
   let schedule:
-    (t, ~kind: [ | `Text | `Binary | `Continuation ], Bigstringaf.t, ~off: int, ~len: int) =>
+    (
+      t,
+      ~kind: [ | `Text | `Binary | `Continuation],
+      Bigstringaf.t,
+      ~off: int,
+      ~len: int
+    ) =>
     unit;
 
   let send_bytes:
-    (t, ~kind: [ | `Text | `Binary | `Continuation ], Bytes.t, ~off: int, ~len: int) => unit;
+    (
+      t,
+      ~kind: [ | `Text | `Binary | `Continuation],
+      Bytes.t,
+      ~off: int,
+      ~len: int
+    ) =>
+    unit;
 
   let send_ping: t => unit;
   let send_pong: t => unit;
@@ -20,26 +33,29 @@ module Wsd: {
   let flushed: (t, unit => unit) => unit;
   let close: t => unit;
 
-  let next:
-    t => [ | `Write(list(IOVec.t(Bigstringaf.t))) | `Yield | `Close(int)];
-  let report_result: (t, [ | `Ok(int) | `Closed]) => unit;
-
   let is_closed: t => bool;
-
-  let when_ready_to_write: (t, unit => unit) => unit;
 };
 
 module Handshake: {
   let create_request:
     (~nonce: string, ~headers: Zillaml.Headers.t, string) => Zillaml.Request.t;
 
-  let create_response_headers:
+  let upgrade_headers:
     (
       ~sha1: string => string,
-      ~sec_websocket_key: string,
-      ~headers: Zillaml.Headers.t
+      ~request_method: Zillaml.Method.t,
+      Zillaml.Headers.t
     ) =>
-    Zillaml.Headers.t;
+    result(list((string, string)), string);
+
+  let respond_with_upgrade:
+    (
+      ~headers: Zillaml.Headers.t=?,
+      ~sha1: string => string,
+      Zillaml.Reqd.t,
+      unit => unit
+    ) =>
+    result(unit, string);
 };
 
 module Client_connection: {
@@ -50,19 +66,18 @@ module Client_connection: {
     | `Handshake_failure(Zillaml.Response.t, Zillaml.Body.t([ | `read]))
   ];
 
-  type input_handlers =
-    Client_websocket.input_handlers = {
-      frame:
-        (
-          ~opcode: Websocket.Opcode.t,
-          ~is_fin: bool,
-          Bigstringaf.t,
-          ~off: int,
-          ~len: int
-        ) =>
-        unit,
-      eof: unit => unit,
-    };
+  type input_handlers = {
+    frame:
+      (
+        ~opcode: Websocket.Opcode.t,
+        ~is_fin: bool,
+        Bigstringaf.t,
+        ~off: int,
+        ~len: int
+      ) =>
+      unit,
+    eof: unit => unit,
+  };
 
   let connect:
     (
@@ -75,12 +90,16 @@ module Client_connection: {
     ) =>
     t;
 
-  let create: (~websocket_handler: Wsd.t => input_handlers) => t;
+  let create:
+    (
+      ~error_handler: (Wsd.t, [ | `Exn(exn)]) => unit=?,
+      Wsd.t => input_handlers
+    ) =>
+    t;
 
   let next_read_operation: t => [ | `Read | `Yield | `Close];
   let next_write_operation:
-    t =>
-    [ | `Write(list(Zillaml.IOVec.t(Bigstringaf.t))) | `Yield | `Close(int)];
+    t => [ | `Write(list(IOVec.t(Bigstringaf.t))) | `Yield | `Close(int)];
 
   let read: (t, Bigstringaf.t, ~off: int, ~len: int) => int;
   let read_eof: (t, Bigstringaf.t, ~off: int, ~len: int) => int;
@@ -91,11 +110,15 @@ module Client_connection: {
 
   let yield_writer: (t, unit => unit) => unit;
 
-  let close: t => unit;
+  let report_exn: (t, exn) => unit;
+
+  let is_closed: t => bool;
+
+  let shutdown: t => unit;
 };
 
 module Server_connection: {
-  type t('fd, 'io);
+  type t;
 
   type input_handlers = {
     frame:
@@ -114,51 +137,34 @@ module Server_connection: {
 
   type error_handler = (Wsd.t, error) => unit;
 
+  /* TODO: should take handshake error handler. */
   let create:
     (
       ~sha1: string => string,
-      ~future: 'io,
       ~error_handler: error_handler=?,
       Wsd.t => input_handlers
     ) =>
-    t(_, 'io);
+    t;
 
-  let create_upgraded:
-    (
-      ~error_handler: (Wsd.t, [ | `Exn(exn)]) => unit=?,
-      ~websocket_handler: Wsd.t => input_handlers
-    ) =>
-    t(_);
+  let create_websocket:
+    (~error_handler: error_handler=?, Wsd.t => input_handlers) => t;
 
-  let respond_with_upgrade:
-    (
-      ~headers: Zillaml.Headers.t=?,
-      ~sha1: string => string,
-      Zillaml.Reqd.t('fd, 'io),
-      'fd => 'io
-    ) =>
-    result(unit, string);
-
-  let next_read_operation: t(_) => [ | `Read | `Yield | `Close | `Upgrade];
+  let next_read_operation: t => [ | `Read | `Yield | `Close];
   let next_write_operation:
-    t('fd, 'io) =>
-    [
-      | `Write(list(Zillaml.IOVec.t(Bigstringaf.t)))
-      | `Upgrade(list(Zillaml.IOVec.t(Bigstringaf.t)), 'fd => 'io)
-      | `Yield
-      | `Close(int)
-    ];
+    t => [ | `Write(list(IOVec.t(Bigstringaf.t))) | `Yield | `Close(int)];
 
-  let read: (t(_), Bigstringaf.t, ~off: int, ~len: int) => int;
-  let read_eof: (t(_), Bigstringaf.t, ~off: int, ~len: int) => int;
-  let report_write_result: (t(_), [ | `Ok(int) | `Closed]) => unit;
+  let read: (t, Bigstringaf.t, ~off: int, ~len: int) => int;
+  let read_eof: (t, Bigstringaf.t, ~off: int, ~len: int) => int;
+  let report_write_result: (t, [ | `Ok(int) | `Closed]) => unit;
 
-  let report_exn: (t(_), exn) => unit;
+  let report_exn: (t, exn) => unit;
 
-  let yield_reader: (t(_), unit => unit) => unit;
-  let yield_writer: (t(_), unit => unit) => unit;
+  let yield_reader: (t, unit => unit) => unit;
+  let yield_writer: (t, unit => unit) => unit;
 
-  let close: t(_) => unit;
+  let is_closed: t => bool;
+
+  let shutdown: t => unit;
 };
 
 module Websocket: {
@@ -249,18 +255,6 @@ module Websocket: {
         ~is_fin: bool,
         ~opcode: Opcode.t,
         ~payload: Bigstringaf.t,
-        ~off: int,
-        ~len: int
-      ) =>
-      unit;
-
-    let schedule_serialize_bytes:
-      (
-        ~mask: int32=?,
-        Faraday.t,
-        ~is_fin: bool,
-        ~opcode: Opcode.t,
-        ~payload: Bytes.t,
         ~off: int,
         ~len: int
       ) =>

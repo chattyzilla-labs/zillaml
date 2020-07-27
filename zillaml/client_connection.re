@@ -49,12 +49,9 @@ type t = {
   config: Config.t,
   reader: Reader.response,
   writer: Writer.t,
-  request_queue:
-    Queue.t(Respd.t),
-    /* invariant: If [request_queue] is not empty, then the head of the queue
-       has already written the request headers to the wire. */
-  wakeup_writer: ref(list(unit => unit)),
-  wakeup_reader: ref(list(unit => unit)),
+  request_queue: Queue.t(Respd.t),
+  /* invariant: If [request_queue] is not empty, then the head of the queue
+     has already written the request headers to the wire. */
 };
 
 let is_closed = t =>
@@ -66,47 +63,31 @@ let is_active = t => !Queue.is_empty(t.request_queue);
 
 let current_respd_exn = t => Queue.peek(t.request_queue);
 
-let on_wakeup_reader = (t, k) =>
-  if (is_closed(t)) {
-    failwith("on_wakeup_reader on closed conn");
-  } else {
-    t.wakeup_reader := [k, ...t.wakeup_reader^];
-  };
+let yield_reader = (t, k) => Reader.on_wakeup(t.reader, k);
 
-let on_wakeup_writer = (t, k) =>
-  if (is_closed(t)) {
-    failwith("on_wakeup_writer on closed conn");
-  } else {
-    t.wakeup_writer := [k, ...t.wakeup_writer^];
-  };
+let wakeup_reader = t => Reader.wakeup(t.reader);
 
-let wakeup_writer = t => {
-  let fs = t.wakeup_writer^;
-  t.wakeup_writer := [];
-  List.iter(f => f(), fs);
-};
+let yield_writer = (t, k) => Writer.on_wakeup(t.writer, k);
 
-let wakeup_reader = t => {
-  let fs = t.wakeup_reader^;
-  t.wakeup_reader := [];
-  List.iter(f => f(), fs);
-};
+let wakeup_writer = t => Writer.wakeup(t.writer);
 
-let create = (~config=Config.default, ()) => {
+[@ocaml.warning "-16"]
+let create = (~config=Config.default) => {
   let request_queue = Queue.create();
   {
     config,
     reader: Reader.response(request_queue),
     writer: Writer.create(),
     request_queue,
-    wakeup_writer: ref([]),
-    wakeup_reader: ref([]),
   };
 };
 
 let request = (t, request, ~error_handler, ~response_handler) => {
   let request_body =
-    Body.create(Bigstringaf.create(t.config.request_body_buffer_size));
+    Body.create(
+      Bigstringaf.create(t.config.request_body_buffer_size),
+      Optional_thunk.some(() => wakeup_writer(t)),
+    );
 
   if (!(Request.body_length(request) == `Chunked)) {
     Body.set_non_chunked(request_body);
@@ -131,25 +112,6 @@ let request = (t, request, ~error_handler, ~response_handler) => {
   request_body;
 };
 
-let flush_request_body = t =>
-  if (is_active(t)) {
-    let respd = current_respd_exn(t);
-    Respd.flush_request_body(respd);
-  };
-
-let set_error_and_handle_without_shutdown = (t, error) =>
-  if (is_active(t)) {
-    let respd = current_respd_exn(t);
-    Respd.report_error(respd, error);
-  };
-/* TODO: not active?! can be because of a closed FD for example. */
-
-let unexpected_eof = t =>
-  set_error_and_handle_without_shutdown(
-    t,
-    `Malformed_response("unexpected eof"),
-  );
-
 let shutdown_reader = t => {
   Reader.force_close(t.reader);
   if (is_active(t)) {
@@ -160,7 +122,6 @@ let shutdown_reader = t => {
 };
 
 let shutdown_writer = t => {
-  flush_request_body(t);
   Writer.close(t.writer);
   if (is_active(t)) {
     let respd = current_respd_exn(t);
@@ -169,17 +130,45 @@ let shutdown_writer = t => {
 };
 
 let shutdown = t => {
+  Queue.iter(Respd.close_response_body, t.request_queue);
+  Queue.clear(t.request_queue);
   shutdown_reader(t);
   shutdown_writer(t);
   wakeup_reader(t);
   wakeup_writer(t);
 };
 
-/* TODO: Need to check in the RFC if reporting an error, e.g. in a malformed
- * response causes the whole connection to shutdown. */
 let set_error_and_handle = (t, error) => {
+  Queue.iter(
+    respd =>
+      switch (Respd.input_state(respd)) {
+      | Wait
+      | Ready => Respd.report_error(respd, error)
+      | Complete =>
+        switch (Reader.next(t.reader)) {
+        | `Error(_)
+        | `Read => Respd.report_error(respd, error)
+        | _ =>
+          /* Don't bother reporting errors to responses that have already
+           * completed. */
+          ()
+        }
+      },
+    t.request_queue,
+  );
+  /* From RFC7230§6.5:
+   *   A client sending a message body SHOULD monitor the network connection
+   *   for an error response while it is transmitting the request.  If the
+   *   client sees a response that indicates the server does not wish to
+   *   receive the message body and is closing the connection, the client
+   *   SHOULD immediately cease transmitting the body and close its side of the
+   *   connection. */
   shutdown(t);
-  set_error_and_handle_without_shutdown(t, error);
+};
+
+let unexpected_eof = t => {
+  set_error_and_handle(t, `Malformed_response("unexpected eof"));
+  shutdown(t);
 };
 
 let report_exn = (t, exn) => set_error_and_handle(t, `Exn(exn));
@@ -190,82 +179,87 @@ let maybe_pipeline_queued_requests = t =>
   /* Don't bother trying to pipeline if there aren't multiple requests in the
    * queue. */
   if (Queue.length(t.request_queue) > 1) {
-    switch (
-      Queue.fold(
-        (prev, respd) => {
-          switch (prev) {
-          | None => ()
-          | Some(prev) =>
-            if (respd.Respd.state == Uninitialized
-                && !Respd.requires_output(prev)) {
-              Respd.write_request(respd);
-            } else {
-              /* bail early. If we can't pipeline this request, we can't write
-               * next ones either. */
-              raise(Local);
-            }
-          };
-          Some(respd);
-        },
-        None,
-        t.request_queue,
-      )
-    ) {
+    try({
+      let _ =
+        Queue.fold(
+          (prev, respd) => {
+            switch (prev) {
+            | None => ()
+            | Some(prev) =>
+              switch (respd.Respd.state, Respd.output_state(prev)) {
+              | (Uninitialized, Complete) => Respd.write_request(respd)
+              | _ =>
+                /* bail early. If we can't pipeline this request, we can't write
+                 * next ones either. */
+                raise(Local)
+              }
+            };
+            Some(respd);
+          },
+          None,
+          t.request_queue,
+        );
+      ();
+    }) {
     | _ => ()
-    | exception Local => ()
     };
   };
 
-let advance_request_queue_if_necessary = t =>
-  if (is_active(t)) {
+let advance_request_queue = t => {
+  ignore(Queue.take(t.request_queue));
+  if (!Queue.is_empty(t.request_queue)) {
+    /* write request to the wire */
     let respd = current_respd_exn(t);
-    if (Respd.persistent_connection(respd)) {
-      if (Respd.is_complete(respd)) {
-        ignore(Queue.take(t.request_queue));
-        if (!Queue.is_empty(t.request_queue)) {
-          /* write request to the wire */
-          let respd = current_respd_exn(t);
-          Respd.write_request(respd);
-        };
-        wakeup_writer(t);
-      } else if (!Respd.requires_output(respd)) {
-        /* From RFC7230§6.3.2:
-         *   A client that supports persistent connections MAY "pipeline" its
-         *   requests (i.e., send multiple requests without waiting for each
-         *   response). */
-        maybe_pipeline_queued_requests(t);
-      };
-    } else {
-      ignore(Queue.take(t.request_queue));
-      Queue.iter(Respd.close_response_body, t.request_queue);
-      Queue.clear(t.request_queue);
-      Queue.push(respd, t.request_queue);
+    switch (respd.state) {
+    | Uninitialized =>
+      /* Only write request if it hasn't been written to the wire yet (e.g. via
+       * pipelining). */
+      Respd.write_request(respd);
       wakeup_writer(t);
-      if (Respd.is_complete(respd)) {
-        shutdown(t);
-      } else if (!Respd.requires_output(respd)) {
-        shutdown_writer(t);
-      };
+    | _ => ()
     };
-  } else if (Reader.is_closed(t.reader)) {
-    shutdown(t);
   };
+};
 
-let _next_read_operation = t => {
-  advance_request_queue_if_necessary(t);
-  if (is_active(t)) {
+let rec _next_read_operation = t =>
+  if (!is_active(t)) {
+    if (Reader.is_closed(t.reader)) {
+      shutdown(t);
+    };
+    Reader.next(t.reader);
+  } else {
     let respd = current_respd_exn(t);
-    if (Respd.requires_input(respd)) {
-      Reader.next(t.reader);
-    } else if (Respd.persistent_connection(respd)) {
-      `Yield;
-    } else {
+    switch (Respd.input_state(respd)) {
+    | Wait => `Yield
+    | Ready => Reader.next(t.reader)
+    | Complete => _final_read_operation_for(t, respd)
+    };
+  }
+
+and _final_read_operation_for = (t, respd) => {
+  let next =
+    if (!Respd.persistent_connection(respd)) {
       shutdown_reader(t);
       Reader.next(t.reader);
+    } else {
+      switch (Respd.output_state(respd)) {
+      | Waiting
+      | Ready => `Yield
+      | Complete =>
+        switch (Reader.next(t.reader)) {
+        | (`Error(_) | `Read) as operation =>
+          /* Keep reading when in a "partial" state (`Read).
+           * Don't advance the request queue if in an error state. */
+          operation
+        | _ =>
+          advance_request_queue(t);
+          _next_read_operation(t);
+        }
+      };
     };
-  } else {
-    Reader.next(t.reader);
-  };
+
+  wakeup_writer(t);
+  next;
 };
 
 let next_read_operation = t =>
@@ -278,6 +272,7 @@ let next_read_operation = t =>
   | `Error(`Invalid_response_body_length(_) as error) =>
     set_error_and_handle(t, error);
     `Close;
+  | `Start => `Read
   | (`Read | `Yield | `Close) as operation => operation
   };
 
@@ -295,46 +290,58 @@ let read = (t, bs, ~off, ~len) =>
 let read_eof = (t, bs, ~off, ~len) => {
   let bytes_read = read_with_more(t, bs, ~off, ~len, Complete);
   if (is_active(t)) {
-    let respd = current_respd_exn(t);
-    /* TODO: could just check for `Respd.requires_input`? */
-    switch (respd.state) {
-    | Uninitialized => assert(false)
-    | Received_response(_)
-    | Closed
-    | Upgraded(_) => ()
-    | Awaiting_response =>
-      /* TODO: review this. It makes sense to tear down the connection if an
-       * unexpected EOF is received. */
-      shutdown(t);
-      unexpected_eof(t);
-    };
+    unexpected_eof(t);
   };
   bytes_read;
 };
 
-let next_write_operation = t => {
-  advance_request_queue_if_necessary(t);
-  flush_request_body(t);
-  Writer.next(t.writer);
+let rec _next_write_operation = t =>
+  if (!is_active(t)) {
+    if (Reader.is_closed(t.reader)) {
+      shutdown(t);
+    };
+    Writer.next(t.writer);
+  } else {
+    let respd = current_respd_exn(t);
+    switch (Respd.output_state(respd)) {
+    | Waiting => `Yield
+    | Ready =>
+      Respd.flush_request_body(respd);
+      Writer.next(t.writer);
+    | Complete => _final_write_operation_for(t, respd)
+    };
+  }
+
+and _final_write_operation_for = (t, respd) => {
+  let next =
+    if (!Respd.persistent_connection(respd)) {
+      shutdown_writer(t);
+      Writer.next(t.writer);
+    } else {
+      /* From RFC7230§6.3.2:
+       *   A client that supports persistent connections MAY "pipeline" its
+       *   requests (i.e., send multiple requests without waiting for each
+       *   response). */
+      maybe_pipeline_queued_requests(t);
+      switch (Respd.input_state(respd)) {
+      | Wait
+      | Ready => Writer.next(t.writer)
+      | Complete =>
+        switch (Reader.next(t.reader)) {
+        | `Error(_)
+        | `Read => Writer.next(t.writer)
+        | _ =>
+          advance_request_queue(t);
+          _next_write_operation(t);
+        }
+      };
+    };
+
+  wakeup_reader(t);
+  next;
 };
 
-let yield_reader = (t, k) => on_wakeup_reader(t, k);
-
-let yield_writer = (t, k) =>
-  if (is_active(t)) {
-    let respd = current_respd_exn(t);
-    if (Respd.requires_output(respd)) {
-      Respd.on_more_output_available(respd, k);
-    } else if (Respd.persistent_connection(respd)) {
-      on_wakeup_writer(t, k);
-    } else {
-      /*  TODO: call shutdown? */
-      Writer.close(t.writer);
-      k();
-    };
-  } else {
-    on_wakeup_writer(t, k);
-  };
+let next_write_operation = t => _next_write_operation(t);
 
 let report_write_result = (t, result) =>
   Writer.report_result(t.writer, result);

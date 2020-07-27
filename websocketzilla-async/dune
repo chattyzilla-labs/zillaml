@@ -1,6 +1,6 @@
 (library
  (name websocketzilla_async)
  (public_name websocketzilla-async)
- (libraries async core faraday-async websocketzilla digestif.ocaml base64)
+ (libraries async core faraday-async gluten-async websocketzilla digestif.ocaml base64)
  (flags
   (:standard -safe-string)))

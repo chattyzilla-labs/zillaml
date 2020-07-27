@@ -1,6 +1,6 @@
 /*----------------------------------------------------------------------------
- *  Copyright (c) 2019 António Nuno Monteiro
- *  Copyright (c) 2019 Dakota Murphy
+ *  Copyright (c) 2019-2020 António Nuno Monteiro
+ *  Copyright (c) 2019-2020 Dakota Murphy
  * 
  *  All rights reserved.
  *
@@ -31,49 +31,76 @@
  *  POSSIBILITY OF SUCH DAMAGE.
  *---------------------------------------------------------------------------*/
 
-open Async;
-open Zillaml;
+module type RUNTIME = {
+  type t;
 
-module type Server = {
-  type socket;
+  let next_read_operation: t => [ | `Read | `Yield | `Close];
 
-  type addr;
+  let read: (t, Bigstringaf.t, ~off: int, ~len: int) => int;
 
-  let create_connection_handler:
-    (
-      ~config: Config.t=?,
-      ~request_handler: addr => Gluten.Server.request_handler(Zillaml.Reqd.t),
-      ~error_handler: addr => Server_connection.error_handler,
-      addr,
-      socket
-    ) =>
-    Deferred.t(unit);
-};
+  let read_eof: (t, Bigstringaf.t, ~off: int, ~len: int) => int;
 
-module type Client = {
-  type socket;
+  let yield_reader: (t, unit => unit) => unit;
 
-  type runtime;
+  let next_write_operation:
+    t =>
+    [ | `Write(list(Faraday.iovec(Bigstringaf.t))) | `Yield | `Close(int)];
 
-  type t = {
-    connection: Zillaml.Client_connection.t,
-    runtime,
-  };
+  let report_write_result: (t, [ | `Ok(int) | `Closed]) => unit;
 
-  let create_connection: (~config: Config.t=?, socket) => Deferred.t(t);
+  let yield_writer: (t, unit => unit) => unit;
 
-  let request:
-    (
-      t,
-      Request.t,
-      ~error_handler: Client_connection.error_handler,
-      ~response_handler: Client_connection.response_handler
-    ) =>
-    Body.t([ | `write]);
-
-  let shutdown: t => Deferred.t(unit);
+  let report_exn: (t, exn) => unit;
 
   let is_closed: t => bool;
 
-  let upgrade: (t, Gluten.impl) => unit;
+  let shutdown: t => unit;
 };
+
+type runtime('t) = (module RUNTIME with type t = 't);
+
+type impl;
+
+let make: (runtime('t), 't) => impl;
+
+module Reqd: {
+  type t('reqd) =
+    pri {
+      reqd: 'reqd,
+      upgrade: impl => unit,
+    };
+};
+
+module Server: {
+  include RUNTIME;
+
+  let create: (~protocol: runtime('t), 't) => t;
+
+  let upgrade_protocol: (t, impl) => unit;
+
+  type request_handler('reqd) = Reqd.t('reqd) => unit;
+
+  let create_upgradable:
+    (
+      ~protocol: runtime('t),
+      ~create: ('reqd => unit) => 't,
+      request_handler('reqd)
+    ) =>
+    t;
+};
+
+module Client: {
+  include RUNTIME;
+
+  let create: (~protocol: runtime('t), 't) => t;
+
+  let upgrade_protocol: (t, impl) => unit;
+};
+
+/* Export upgradable Reqd for convenience */
+type reqd('reqd) =
+  Reqd.t('reqd) =
+    pri {
+      reqd: 'reqd,
+      upgrade: impl => unit,
+    };

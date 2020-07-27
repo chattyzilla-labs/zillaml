@@ -38,12 +38,6 @@ type error = [
   | `Exn(exn)
 ];
 
-type response_state('handle, 'io) =
-  | Waiting(ref(unit => unit))
-  | Complete(Response.t)
-  | Streaming(Response.t, Body.t([ | `write]))
-  | Upgrade(Response.t, 'handle => 'io);
-
 type error_handler =
   (~request: Request.t=?, error, Headers.t => Body.t([ | `write])) => unit;
 
@@ -72,18 +66,16 @@ module Writer = Serialize.Writer;
  *  ]}
  *
  * */
-type t('handle, 'io) = {
+type t = {
   request: Request.t,
   request_body: Body.t([ | `read]),
   writer: Writer.t,
   response_body_buffer: Bigstringaf.t,
   error_handler,
   mutable persistent: bool,
-  mutable response_state: response_state('handle, 'io),
+  mutable response_state: Response_state.t,
   mutable error_code: [ | `Ok | error],
 };
-
-let default_waiting = Sys.opaque_identity(() => ());
 
 let create =
     (error_handler, request, request_body, writer, response_body_buffer) => {
@@ -93,14 +85,8 @@ let create =
   response_body_buffer,
   error_handler,
   persistent: Request.persistent_connection(request),
-  response_state: Waiting(ref(default_waiting)),
+  response_state: Waiting,
   error_code: `Ok,
-};
-
-let done_waiting = when_done_waiting => {
-  let f = when_done_waiting^;
-  when_done_waiting := default_waiting;
-  f();
 };
 
 let request = ({request, _}) => request;
@@ -108,18 +94,17 @@ let request_body = ({request_body, _}) => request_body;
 
 let response = ({response_state, _}) =>
   switch (response_state) {
-  | Waiting(_) => None
+  | Waiting => None
   | Streaming(response, _)
-  | Complete(response)
+  | Fixed(response)
   | Upgrade(response, _) => Some(response)
   };
 
 let response_exn = ({response_state, _}) =>
   switch (response_state) {
-  | Waiting(_) =>
-    failwith("httpaf.Reqd.response_exn: response has not started")
+  | Waiting => failwith("httpaf.Reqd.response_exn: response has not started")
   | Streaming(response, _)
-  | Complete(response)
+  | Fixed(response)
   | Upgrade(response, _) => response
   };
 
@@ -130,19 +115,19 @@ let respond_with_string = (t, response, str) => {
     );
   };
   switch (t.response_state) {
-  | Waiting(when_done_waiting) =>
+  | Waiting =>
     /* XXX(seliopou): check response body length */
     Writer.write_response(t.writer, response);
     Writer.write_string(t.writer, str);
     if (t.persistent) {
       t.persistent = Response.persistent_connection(response);
     };
-    t.response_state = Complete(response);
-    done_waiting(when_done_waiting);
+    t.response_state = Fixed(response);
+    Writer.wakeup(t.writer);
   | Streaming(_)
   | Upgrade(_) =>
     failwith("httpaf.Reqd.respond_with_string: response already started")
-  | Complete(_) =>
+  | Fixed(_) =>
     failwith("httpaf.Reqd.respond_with_string: response already complete")
   };
 };
@@ -154,41 +139,47 @@ let respond_with_bigstring = (t, response, bstr: Bigstringaf.t) => {
     );
   };
   switch (t.response_state) {
-  | Waiting(when_done_waiting) =>
+  | Waiting =>
     /* XXX(seliopou): check response body length */
     Writer.write_response(t.writer, response);
     Writer.schedule_bigstring(t.writer, bstr);
     if (t.persistent) {
       t.persistent = Response.persistent_connection(response);
     };
-    t.response_state = Complete(response);
-    done_waiting(when_done_waiting);
+    t.response_state = Fixed(response);
+    Writer.wakeup(t.writer);
   | Streaming(_)
   | Upgrade(_) =>
     failwith("httpaf.Reqd.respond_with_bigstring: response already started")
-  | Complete(_) =>
+  | Fixed(_) =>
     failwith("httpaf.Reqd.respond_with_bigstring: response already complete")
   };
 };
 
 let unsafe_respond_with_streaming = (~flush_headers_immediately, t, response) =>
   switch (t.response_state) {
-  | Waiting(when_done_waiting) =>
-    let response_body = Body.create(t.response_body_buffer);
+  | Waiting =>
+    let response_body =
+      Body.create(
+        t.response_body_buffer,
+        Optional_thunk.some(() => Writer.wakeup(t.writer)),
+      );
+
     Writer.write_response(t.writer, response);
-    if (!flush_headers_immediately) {
-      Writer.yield(t.writer);
-    };
     if (t.persistent) {
       t.persistent = Response.persistent_connection(response);
     };
     t.response_state = Streaming(response, response_body);
-    done_waiting(when_done_waiting);
+    if (flush_headers_immediately) {
+      Writer.wakeup(t.writer);
+    } else {
+      Writer.yield(t.writer);
+    };
     response_body;
   | Streaming(_)
   | Upgrade(_) =>
     failwith("httpaf.Reqd.respond_with_streaming: response already started")
-  | Complete(_) =>
+  | Fixed(_) =>
     failwith("httpaf.Reqd.respond_with_streaming: response already complete")
   };
 
@@ -201,29 +192,24 @@ let respond_with_streaming = (~flush_headers_immediately=false, t, response) => 
   unsafe_respond_with_streaming(~flush_headers_immediately, t, response);
 };
 
-let upgrade_handler = t =>
-  switch (t.response_state) {
-  | Upgrade(_, upgrade_handler) => Some(upgrade_handler)
-  | _ => None
-  };
-
 let unsafe_respond_with_upgrade = (t, headers, upgrade_handler) =>
   switch (t.response_state) {
-  | Waiting(when_done_waiting) =>
+  | Waiting =>
     let response = Response.create(~headers, `Switching_protocols);
     Writer.write_response(t.writer, response);
     if (t.persistent) {
       t.persistent = Response.persistent_connection(response);
     };
     t.response_state = Upgrade(response, upgrade_handler);
+    Writer.flush(t.writer, upgrade_handler);
     Body.close_reader(t.request_body);
-    done_waiting(when_done_waiting);
+    Writer.wakeup(t.writer);
   | Streaming(_)
   | Upgrade(_) =>
     failwith(
       "httpaf.Reqd.unsafe_respond_with_upgrade: response already started",
     )
-  | Complete(_) =>
+  | Fixed(_) =>
     failwith(
       "httpaf.Reqd.unsafe_respond_with_upgrade: response already complete",
     )
@@ -240,9 +226,8 @@ let respond_with_upgrade = (t, response, upgrade_handler) => {
 
 let report_error = (t, error) => {
   t.persistent = false;
-  Body.close_reader(t.request_body);
   switch (t.response_state, t.error_code) {
-  | (Waiting(_), `Ok) =>
+  | (Waiting, `Ok) =>
     t.error_code = (error :> [ | `Ok | error]);
     let status =
       switch ((error :> [ error | Status.standard])) {
@@ -250,27 +235,44 @@ let report_error = (t, error) => {
       | #Status.standard as status => status
       };
 
-    t.error_handler(~request=t.request, error, headers =>
-      unsafe_respond_with_streaming(
-        ~flush_headers_immediately=true,
-        t,
-        Response.create(~headers, status),
-      )
+    t.error_handler(
+      ~request=t.request,
+      error,
+      headers => {
+        let response_body =
+          unsafe_respond_with_streaming(
+            t,
+            ~flush_headers_immediately=true,
+            Response.create(~headers, status),
+          );
+
+        /* NOTE(anmonteiro): When reporting an error that calls the error
+           handler, we can only deliver an EOF to the request body once the error
+           response has started. Otherwise, the request body `on_eof` handler
+           could erroneously send a successful response instead of letting us
+           handle the error. */
+        Body.close_reader(t.request_body);
+        response_body;
+      },
     );
-  | (Waiting(_), `Exn(_)) =>
-    /* XXX(seliopou): Decide what to do in this unlikely case. There is an
-     * outstanding call to the [error_handler], but an intervening exception
-     * has been reported as well. */
-    failwith("httpaf.Reqd.report_exn: NYI")
-  | (Streaming(_response, response_body), `Ok) =>
-    Body.close_writer(response_body)
-  | (Streaming(_response, response_body), `Exn(_)) =>
-    Body.close_writer(response_body);
-    Writer.close_and_drain(t.writer);
-  | (Complete(_) | Streaming(_) | Upgrade(_) | Waiting(_), _) =>
-    /* XXX(seliopou): Once additional logging support is added, log the error
-     * in case it is not spurious. */
-    ()
+  | other =>
+    Body.close_reader(t.request_body);
+    switch (other) {
+    | (Waiting, `Exn(_)) =>
+      /* XXX(seliopou): Decide what to do in this unlikely case. There is an
+       * outstanding call to the [error_handler], but an intervening exception
+       * has been reported as well. */
+      failwith("httpaf.Reqd.report_exn: NYI")
+    | (Streaming(_response, response_body), `Ok) =>
+      Body.close_writer(response_body)
+    | (Streaming(_response, response_body), `Exn(_)) =>
+      Body.close_writer(response_body);
+      Writer.close_and_drain(t.writer);
+    | (Fixed(_) | Streaming(_) | Upgrade(_) | Waiting, _) =>
+      /* XXX(seliopou): Once additional logging support is added, log the error
+       * in case it is not spurious. */
+      ()
+    };
   };
 };
 
@@ -299,43 +301,22 @@ let error_code = t =>
   | `Ok => None
   };
 
-let on_more_output_available = (t, f) =>
-  switch (t.response_state) {
-  | Waiting(when_done_waiting) =>
-    if (!(when_done_waiting^ === default_waiting)) {
-      failwith(
-        "httpaf.Reqd.on_more_output_available: only one callback can be registered at a time",
-      );
-    };
-    when_done_waiting := f;
-  | Streaming(_, response_body) =>
-    Body.when_ready_to_write(response_body, f)
-  | Complete(_) =>
-    failwith(
-      "httpaf.Reqd.on_more_output_available: response already complete",
-    )
-  | Upgrade(_) =>
-    /* XXX(anmonteiro): Connections that have been upgraded "require output"
-     * forever, but outside the HTTP layer, meaning they're permanently
-     * "yielding". We don't register the wakeup callback because it's not going
-     * to get called. */
-    ()
-  };
-
 let persistent_connection = t => t.persistent;
 
-let requires_input = ({request_body, _}) => !Body.is_closed(request_body);
-
-let requires_output = ({response_state, _}) =>
-  switch (response_state) {
-  | Complete(_) => false
-  | Streaming(_, response_body) =>
-    !Body.is_closed(response_body) || Body.has_pending_output(response_body)
-  | Waiting(_)
-  | Upgrade(_) => true
+let input_state = (t): Input_state.t =>
+  switch (t.response_state) {
+  | Upgrade(_) => Ready
+  | _ =>
+    if (Body.is_closed(t.request_body)) {
+      Complete;
+    } else if (Body.is_read_scheduled(t.request_body)) {
+      Ready;
+    } else {
+      Wait;
+    }
   };
 
-let is_complete = t => !(requires_input(t) || requires_output(t));
+let output_state = t => Response_state.output_state(t.response_state);
 
 let flush_request_body = t => {
   let request_body = request_body(t);
@@ -346,16 +327,11 @@ let flush_request_body = t => {
   };
 };
 
-let flush_response_body = t =>
-  switch (t.response_state) {
-  | Streaming(response, response_body) =>
-    let request_method = t.request.Request.meth;
-    let encoding =
-      switch (Response.body_length(~request_method, response)) {
-      | (`Fixed(_) | `Close_delimited | `Chunked) as encoding => encoding
-      | `Error(_) => assert(false)
-      }; /* XXX(seliopou): This needs to be handled properly */
-
-    Body.transfer_to_writer_with_encoding(response_body, ~encoding, t.writer);
-  | _ => ()
-  };
+let flush_response_body = t => {
+  let request_method = t.request.Request.meth;
+  Response_state.flush_response_body(
+    t.response_state,
+    ~request_method,
+    t.writer,
+  );
+};

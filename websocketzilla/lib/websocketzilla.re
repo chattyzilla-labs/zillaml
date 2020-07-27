@@ -1,3 +1,4 @@
+module IOVec = Zillaml.IOVec;
 module Client_handshake = Client_handshake;
 module Client_connection = Client_connection;
 module Handshake = Handshake;
