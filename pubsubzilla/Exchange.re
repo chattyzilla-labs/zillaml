@@ -28,10 +28,12 @@ module type Exchange = {
 
   let subscribe: (t, Topic.t) => Result.t(Pipe.Reader.t(Message.t), string);
 
+  let subscribe_dir: (t, Topic.t, Rpc.Pipe_rpc.Direct_stream_writer.t(Message.t)) => Result.t(unit, string);
+
   let clear_topic: (t, Topic.t) => unit;
 };
 
-// add all the protocol code here using the methods from Exhange and client and server modules with rpc implementation
+// TODO: implement a version of this functor that uses Rpc.Expert implementation for pub;ish messages in Server module to avoid allocating the message payload to an ocaml type via bin_prot if the message is just going to be serialized and  sent to a subscriber
 module MakeExchange = (Exchange: Exchange) => {
   
   include Exchange;
@@ -121,7 +123,7 @@ module MakeExchange = (Exchange: Exchange) => {
      };
      
   };
-  
+    
   module Server = {
   
     let publish_impl = (exchange, payload) => {
@@ -132,6 +134,8 @@ module MakeExchange = (Exchange: Exchange) => {
     let subscribe_impl = (exchange, topic) =>
       return(Exchange.subscribe(exchange, topic));
 
+    let subscribe_dir_impl = (exchange, topic, writer) =>
+      return(Exchange.subscribe_dir(exchange, topic, writer));
 
     let clear_impl = (exchange, topic) => {
       Log.Global.info("Clearing topic %s", Exchange.Topic.to_string(topic));
@@ -145,6 +149,7 @@ module MakeExchange = (Exchange: Exchange) => {
     let implementations = [
       Rpc.Rpc.implement(publish_rpc, publish_impl),
       Rpc.Pipe_rpc.implement(subscribe_rpc, subscribe_impl),
+      Rpc.Pipe_rpc.implement_direct(subscribe_rpc, subscribe_dir_impl),
       Rpc.Rpc.implement(clear_rpc, clear_impl),
     ];
 
