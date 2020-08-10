@@ -147,28 +147,24 @@ let () =
                 ~host="localhost",
                 ~port=5000,
               );
-            switch%bind (
-              Client.subscribe_old(
-                ~connection=conn,
-                ~topic=[
-                  Word("dakota"),
-                  Word("messages"),
-                ],
-              )
-            ) {
-            | Error(_) => Deferred.return()
-            | Ok(pipe) =>
-              Pipe.iter(
-                pipe,
-                ~f=msg => {
+
+            let _deffer = Client.subscribe(
+              ~connection=conn,
+              ~topic=[Word("dakota"), Word("messages")],
+              ~f= (msg) => {
+                switch msg {
+                | Update(msg) => {
                   let time = Time.now();
                   printf("%s: %s\n", Time.to_string(time), msg.text);
                   //  printf("%s%s\n%!", clear_string, msg.text);
                   //  printf("%s%s\n%!", clear_string, msg.sender);
-                  Deferred.return();
-                },
-              )
-            };
+                  Continue;
+                }
+                | Closed(_) => Continue;
+                };
+              }
+            );
+            Deferred.return();
           } else {
             let%bind conn =
               Client.get_connection(

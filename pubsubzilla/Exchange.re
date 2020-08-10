@@ -26,9 +26,7 @@ module type Exchange = {
 
   let publish: (t, Topic.t, Message.t) => unit;
 
-  let subscribe: (t, Topic.t) => Result.t(Pipe.Reader.t(Message.t), string);
-
-  let subscribe_dir: (t, Topic.t, Rpc.Pipe_rpc.Direct_stream_writer.t(Message.t)) => Result.t(unit, string);
+  let subscribe: (t, Topic.t, Rpc.Pipe_rpc.Direct_stream_writer.t(Message.t)) => Result.t(unit, string);
 
   let clear_topic: (t, Topic.t) => unit;
 };
@@ -98,15 +96,6 @@ module MakeExchange = (Exchange: Exchange) => {
      };
 
     // https://github.com/janestreet/async_rpc_kernel/blob/master/src/rpc.mli#L566
-     let subscribe_old = (~connection, ~topic) => {
-       switch%bind (Rpc.Pipe_rpc.dispatch(subscribe_rpc, connection, topic)) {
-       | Error(err) => Error.raise(err)
-       | Ok(Error(s)) =>
-         eprintf("subscribe failed: %s\n", s);
-         return(Error(s));
-       | Ok(Ok((pipe, _id))) => return(Ok(pipe))
-       };
-     };
 
     let subscribe = (~connection, ~topic, ~f) => {
       switch%bind (Rpc.Pipe_rpc.dispatch_iter(subscribe_rpc, connection, topic, ~f)) {
@@ -131,11 +120,9 @@ module MakeExchange = (Exchange: Exchange) => {
       return(Exchange.publish(exchange, payload.topic, payload.message));
     };
 
-    let subscribe_impl = (exchange, topic) =>
-      return(Exchange.subscribe(exchange, topic));
 
-    let subscribe_dir_impl = (exchange, topic, writer) =>
-      return(Exchange.subscribe_dir(exchange, topic, writer));
+    let subscribe_impl = (exchange, topic, writer) =>
+      return(Exchange.subscribe(exchange, topic, writer));
 
     let clear_impl = (exchange, topic) => {
       Log.Global.info("Clearing topic %s", Exchange.Topic.to_string(topic));
@@ -148,8 +135,7 @@ module MakeExchange = (Exchange: Exchange) => {
 
     let implementations = [
       Rpc.Rpc.implement(publish_rpc, publish_impl),
-      Rpc.Pipe_rpc.implement(subscribe_rpc, subscribe_impl),
-      Rpc.Pipe_rpc.implement_direct(subscribe_rpc, subscribe_dir_impl),
+      Rpc.Pipe_rpc.implement_direct(subscribe_rpc, subscribe_impl),
       Rpc.Rpc.implement(clear_rpc, clear_impl),
     ];
 
