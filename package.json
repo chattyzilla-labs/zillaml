@@ -60,8 +60,7 @@
     "@opam/caqti-driver-postgresql": "*",
     "@opam/conduit": "*",
     "@opam/core": "v0.14.0",
-    "@opam/digestif": "0.8.0",
-    "@opam/dune": "*",
+    "@opam/digestif": "*",
     "faraday": "*",
     "faraday-async": "*",
     "@opam/fmt": "*",
@@ -78,7 +77,6 @@
     "@reason-native/console": "*",
     "@reason-native/pastel": "*",
     "@reason-native/rely": "*",
-    "ocaml": "~4.08.0",
     "refmterr": "*"
   },
   "resolutions": {
@@ -93,8 +91,10 @@
     "faraday-async":"chattyzilla-labs/faraday-fork:faraday-async.opam#b5344ec"
   },
   "devDependencies": {
-    "@opam/merlin": "*",
-    "ocaml": "~4.08.0",
-    "@opam/odoc": "*"
+    "ocaml": "~4.09.0",
+    "@opam/odoc": "*",
+    "@opam/dune": "2.6.0",
+    "@opam/dune-configurator": "2.6.0",
+    "@opam/ocaml-lsp-server": "ocaml/ocaml-lsp:ocaml-lsp-server.opam"
   }
 }

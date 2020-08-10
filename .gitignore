@@ -10,3 +10,5 @@ _release
 ocaml-lmdb/.DS_Store
 
 .github/
+
+.vscode/settings.json
