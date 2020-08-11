@@ -2,6 +2,10 @@ open Core;
 open Async;
 open Exchange;
 
+/**
+ * TODO: 
+ *  phantom typing for directory type for more efficient encoding of hashtags and stars
+ */
 module Make = (Message: Message) => {
   module Topic = {
     module Directory = {
@@ -12,9 +16,9 @@ module Make = (Message: Message) => {
         | Word(string);
     };
 
-    [@deriving (sexp, bin_io, compare)]
+    [@deriving (sexp, bin_io, hash, compare)]
     type t = list(Directory.t);
-
+    
     let string_of_directory =
       fun
       | Directory.Hashtag => "#"
@@ -32,6 +36,7 @@ module Make = (Message: Message) => {
 
   module Message = Message;
   module Group = Rpc.Pipe_rpc.Direct_stream_writer.Group;
+  
   type t = {
     node_type,
     children: Core.Hashtbl.t(Topic.Directory.t, t),
@@ -57,6 +62,19 @@ module Make = (Message: Message) => {
     last_message: None,
   };
 
+  module Topic_cache = Hash_queue.Make(Topic);
+
+  let max_cache_size = 500;
+
+  let topic_cache = lazy(Topic_cache.create())
+
+  let remove_topic_from_cache = topic => 
+    ignore(
+      Topic_cache.remove(
+        Lazy.force(topic_cache), 
+        topic
+      ) : [ `No_such_key | `Ok ]
+    )
   /*
      if hash table is empty
      and subscribers list is empty
@@ -78,33 +96,66 @@ module Make = (Message: Message) => {
     };
   };
 
-  let rec get_leaf = (root, topic) => {
+  let rec get_leaf' = (root, topic) => {
     switch (topic) {
     | [] => Some(root)
     | [hd, ...tl] =>
       switch (Hashtbl.find(root.children, hd)) {
       | None => None
-      | Some(node) => get_leaf(node, tl)
+      | Some(node) => get_leaf'(node, tl)
       }
     };
   };
 
+  /**
+   * Memorization logic taken from the lru function in core_kernal memo
+   * https://github.com/janestreet/core_kernel/blob/master/src/memo.ml#L46
+   */
+  let get_leaf = (root, topic) => {
+    let cache = Lazy.force(topic_cache)
+    switch (Topic_cache.lookup_and_move_to_back(cache, topic)) {
+    | Some(result) => Some(result)
+    | None => 
+      let result = get_leaf'(root, topic);
+      switch (result) {
+      | None => ()
+      | Some(node) => 
+        Topic_cache.enqueue_back_exn(cache, topic, node);
+        /* eject least recently used cache entry */
+        if (Topic_cache.length(cache) > max_cache_size) {
+          ignore(Topic_cache.dequeue_front_exn(cache): t);
+        };
+      };
+      result;
+    }
+  };
+
   let close_subscriber_streams = t => 
     List.iter(t.group |> Group.to_list, ~f=Rpc.Pipe_rpc.Direct_stream_writer.close);
+  
+  let close_topic = (~root, ~topic, ~closing_msg) => {
+    switch (get_leaf(root, topic)) {
+    | None => return()
+    | Some(node) =>
+      let%bind () = switch (closing_msg) {
+      | None => return()
+      | Some(msg) => 
+        Group.write(node.group, msg)
+      };
+      /* clean up topic cache to avoid  */
+      remove_topic_from_cache(topic);
+      /* unsubscribe all subscriber*/
+      close_subscriber_streams(node);
+      /* clean up un-needed nodes */
+      clean_unused_nodes(node);
+      return()
+    };
+  };
 
-
-  /* https://github.com/janestreet/async_rpc_kernel/blob/master/src/rpc.ml#L566*/
-  let subscribe = (root, topic, writer) => {
-    open Rpc.Pipe_rpc.Direct_stream_writer;
+  let find_or_add_topic = (root, topic) => {
     let rec aux = (topic, node) => {
       switch (topic) {
-      | [] =>
-        Group.add_exn(node.group, writer);
-        switch (node.last_message) {
-        | None => ()
-        | Some(msg) => 
-          let _value = Rpc.Pipe_rpc.Direct_stream_writer.write_without_pushback(writer, msg)
-        };
+      | [] => node
       | [hd, ...tl] =>
         let next_node =
           Hashtbl.find_or_add(
@@ -115,7 +166,7 @@ module Make = (Message: Message) => {
                 Hashtbl.create(
                   (module Topic.Directory),
                   ~growth_allowed=true,
-                  ~size=500,
+                  ~size=50,
                 );
               {
                 node_type: Leaf(node, hd),
@@ -128,8 +179,27 @@ module Make = (Message: Message) => {
         aux(tl, next_node);
       };
     };
-    aux(topic, root);
-    Ok();
+    switch (get_leaf(root, topic)) {
+    | None => aux(topic, root)
+    | Some(node) => node
+    };
+  };
+
+  let add_topic = (root, topic) => ignore(find_or_add_topic(root, topic) : t);
+
+  /* https://github.com/janestreet/async_rpc_kernel/blob/master/src/rpc.ml#L566*/
+  let subscribe = (root, topic, writer) => {
+    open Rpc.Pipe_rpc.Direct_stream_writer;
+    let node = find_or_add_topic(root, topic);
+    Group.add_exn(node.group, writer);
+    closed(writer) >>> () => if(Group.length(node.group) == 0) {
+      remove_topic_from_cache(topic)
+      clean_unused_nodes(node)
+    }
+    switch (node.last_message) {
+    | None => Ok()
+    | Some(msg) => Ok(ignore(write_without_pushback(writer, msg) : [ `Closed | `Ok ]))
+    };
   };
 
   let publish = (root, topic, msg) => {
@@ -168,26 +238,10 @@ module Make = (Message: Message) => {
                   | Some(node) => [node, ...nodes]
                   };
                 | Word(_) as hd =>
-                  let next_node =
-                    Hashtbl.find_or_add(
-                      node.children,
-                      hd,
-                      ~default=() => {
-                        let children =
-                          Hashtbl.create(
-                            (module Topic.Directory),
-                            ~growth_allowed=true,
-                            ~size=500,
-                          );
-                        {
-                          node_type: Leaf(node, hd),
-                          children,
-                          group: Group.create(),
-                          last_message: None,
-                        };
-                      },
-                    );
-                  let nodes = [next_node];
+                  let nodes = switch (Hashtbl.find(node.children, hd)) {
+                  | None => []
+                  | Some(node) => [node]
+                  };
                   let nodes =
                     switch (Hashtbl.find(node.children, Star)) {
                     | None => nodes
@@ -215,16 +269,5 @@ module Make = (Message: Message) => {
       };
     };
     aux(topic, [root]);
-  };
-
-  let clear_topic = (root, topic) => {
-    switch (get_leaf(root, topic)) {
-    | None => ()
-    | Some(node) =>
-      /* unsubscribe all subscriber*/
-      close_subscriber_streams(node);
-      /* clean up un-needed nodes */
-      clean_unused_nodes(node);
-    };
   };
 };

@@ -91,6 +91,7 @@
     "faraday-async":"chattyzilla-labs/faraday-fork:faraday-async.opam#b5344ec"
   },
   "devDependencies": {
+    "@opam/merlin": "*",
     "ocaml": "~4.09.0",
     "@opam/odoc": "*",
     "@opam/dune": "2.6.0",

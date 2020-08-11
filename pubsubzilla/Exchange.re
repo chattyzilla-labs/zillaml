@@ -2,7 +2,7 @@ open Core;
 open Async;
 
 module type Topic = {
-  [@deriving (sexp, bin_io, compare)]
+  [@deriving (sexp, bin_io, hash, compare)]
   type t;
   let to_string: t => string;
 };
@@ -28,25 +28,35 @@ module type Exchange = {
 
   let subscribe: (t, Topic.t, Rpc.Pipe_rpc.Direct_stream_writer.t(Message.t)) => Result.t(unit, string);
 
-  let clear_topic: (t, Topic.t) => unit;
+  let close_topic: (~root:t, ~topic:Topic.t, ~closing_msg:option(Message.t)) => Deferred.t(unit);
+
+  let add_topic: (t, Topic.t) => unit;
 };
 
 // TODO: implement a version of this functor that uses Rpc.Expert implementation for pub;ish messages in Server module to avoid allocating the message payload to an ocaml type via bin_prot if the message is just going to be serialized and  sent to a subscriber
+// TODO: LOOK into using rpc parrallel for parallel processing of topic meta and what not
+//  https://github.com/janestreet/rpc_parallel/blob/master/example/stream_workers.ml
 module MakeExchange = (Exchange: Exchange) => {
   
   include Exchange;
 
   [@deriving (sexp, bin_io, compare)]
-  type payload = {
+  type publish_payload = {
     topic: Exchange.Topic.t,
     message: Exchange.Message.t
+  };
+
+  [@deriving (sexp, bin_io, compare)]
+  type close_topic_payload = {
+    topic: Exchange.Topic.t,
+    closing_msg: option(Exchange.Message.t)
   };
 
   let publish_rpc =
     Rpc.Rpc.create(
       ~name="publish",
       ~version=Exchange.version,
-      ~bin_query=bin_payload,
+      ~bin_query=bin_publish_payload,
       ~bin_response=Unit.bin_t,
     );
 
@@ -60,9 +70,16 @@ module MakeExchange = (Exchange: Exchange) => {
       ~bin_error=String.bin_t,
     );
 
-  let clear_rpc =
+  let close_rpc =
     Rpc.Rpc.create(
-      ~name="clear",
+      ~name="close",
+      ~version=Exchange.version,
+      ~bin_query=bin_close_topic_payload,
+      ~bin_response=Unit.bin_t,
+    );
+  let add_rpc =
+    Rpc.Rpc.create(
+      ~name="add",
       ~version=Exchange.version,
       ~bin_query=Exchange.Topic.bin_t,
       ~bin_response=Unit.bin_t,
@@ -92,7 +109,7 @@ module MakeExchange = (Exchange: Exchange) => {
      };
 
      let publish = (~connection, ~topic, ~message) => {
-       Rpc.Rpc.dispatch_exn(publish_rpc, connection, {topic, message });
+       Rpc.Rpc.dispatch_exn(publish_rpc, connection, { topic, message });
      };
 
     // https://github.com/janestreet/async_rpc_kernel/blob/master/src/rpc.mli#L566
@@ -107,8 +124,12 @@ module MakeExchange = (Exchange: Exchange) => {
       };
     };
 
-     let clear = (~connection, ~topic) => {
-       Rpc.Rpc.dispatch_exn(clear_rpc, connection, topic);
+     let close = (~connection, ~topic, ~closing_msg) => {
+       Rpc.Rpc.dispatch_exn(close_rpc, connection, { topic, closing_msg });
+     };
+
+     let add_topic = (~connection, ~topic) => {
+       Rpc.Rpc.dispatch_exn(add_rpc, connection, topic);
      };
      
   };
@@ -124,10 +145,14 @@ module MakeExchange = (Exchange: Exchange) => {
     let subscribe_impl = (exchange, topic, writer) =>
       return(Exchange.subscribe(exchange, topic, writer));
 
-    let clear_impl = (exchange, topic) => {
+    let close_impl = (exchange, payload) => {
+      Log.Global.info("Clearing topic %s", Exchange.Topic.to_string(payload.topic));
+      Exchange.close_topic(~root=exchange, ~topic=payload.topic, ~closing_msg=payload.closing_msg);
+    };
+
+    let add_impl = (exchange, topic) => {
       Log.Global.info("Clearing topic %s", Exchange.Topic.to_string(topic));
-      Exchange.clear_topic(exchange, topic);
-      return();
+      Exchange.add_topic(exchange, topic) |> return;
     };
 
     /* We then create a list of all the implementations we're going to support in
@@ -136,7 +161,8 @@ module MakeExchange = (Exchange: Exchange) => {
     let implementations = [
       Rpc.Rpc.implement(publish_rpc, publish_impl),
       Rpc.Pipe_rpc.implement_direct(subscribe_rpc, subscribe_impl),
-      Rpc.Rpc.implement(clear_rpc, clear_impl),
+      Rpc.Rpc.implement(close_rpc, close_impl),
+      Rpc.Rpc.implement(add_rpc, add_impl),
     ];
 
     /** TODO add ability for custom implementations*/
