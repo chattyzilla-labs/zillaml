@@ -57,16 +57,29 @@ let error_handler:
 
 let router = Router.run_router([ping_router]) |> Router.create_router;
 
-let socket_server = ((port, accepts), ()) => Http.create_server_with_web_sockets(
+module Websocket_interface: Http.Websocket_interface = {
+  type server_to_client = string;
+  type client_to_server = string;
+  let server_to_client_of_string =  str => str;
+  let string_of_server_to_client = str => str;
+  let client_to_server_of_string=  str => str;
+  let string_of_client_to_server =  str => str;
+};
+
+
+
+module Server = Http.Make_server_with_ws(Websocket_interface);
+
+let socket_server = ((port, accepts), ()) => Server.start(
     ~port,
-    ~on_start=on_start,
+    ~on_start,
     ~max_accepts_per_batch=accepts,
-    ~check_for_websocket_request=(req) => Deferred.return(Websocket_async.upgrade_present(req.headers) && Websocket_async.default_ws_path(req)),
-    ~on_ws_connect=(ws) => {
-      { Websocket_async.on_message: (msg) => ws.send(msg), on_close: () => ()}
-    },
+    ~req_logger=Some(Common.req_logger),
     ~http_router=router, 
-    ~reqlogger=Some(Common.req_logger)
+    ~check_for_websocket_request= (req) => Deferred.return(Websocket_async.upgrade_present(req.headers) && Websocket_async.default_ws_path(req)),
+    ~on_ws_connect = ws => {
+      { Websocket_async.on_message: (msg) => ws.send(msg |> Websocket_interface.string_of_client_to_server |> Websocket_interface.server_to_client_of_string), on_close: () => ()}
+    }
 );
 
 let server = ((port, accepts), ()) => Http.create_server(

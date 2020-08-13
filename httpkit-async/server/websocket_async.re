@@ -1,16 +1,15 @@
 open Core;
 
-type ws_connection_handler = {
-  on_message: string => unit,
+type ws_connection_handler('a) = {
+  on_message: 'a => unit,
   on_close: unit => unit
 };
 
-type ws_connection = {
+type ws_connection('a) = {
   path: list(string),
   query: list((string, list(string))),
   wsd: Websocketzilla.Wsd.t,
-  send: string => unit,
-  id: int32
+  send: 'a => unit
 };
 
 let regexComma = Str.regexp_string(",");
