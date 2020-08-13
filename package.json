@@ -29,7 +29,6 @@
       ]
     ],
     "buildDev": "refmterr dune build examples/Main.exe",
-    "buildsInSource": "_build",
     "buildEnv": { "ODOC_SYNTAX": "re" },
     "install": [
       [ "esy-installer", "zillaml.install" ],

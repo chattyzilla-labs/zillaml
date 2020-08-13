@@ -134,12 +134,12 @@ let () =
             ~doc="text to publish to directory",
           ),
         ),
-        ~f=(((_, (is_server, is_subscriber)), text), ()) => {
+        ~f=(((p, (is_server, is_subscriber)), text), ()) => {
           // Mlib.Util.print_statement("expected", "1167")  |> print_endline;
           // Mlib.Challange.smallest_sum([2,3,6,7,5,8,10,15,3,6,9,2,1,8,2,5,8,3,15,5,6]) |> string_of_int |> Mlib.Util.print_statement("output") |> print_endline;
           open Mlib.Server.MessageTopicServer;
           if ( is_server ) {
-            let _a = Server.server(~port=5000);
+            let _a = Mlib.Server.socket_server(p, ());
             Deferred.never();
           } else if (is_subscriber) {
             let%bind conn =

@@ -4,11 +4,17 @@ open Async;
 open Zillaml_httpkit_async.Server;
 open Websocket_async;
 
-let on_start = port => {
+let on_start = (server, port) => {
   Logs.set_level(Some(Logs.App));
   Logs.set_reporter(Logs_fmt.reporter());
   print_endline(Util.hello());
   print_endline(Util.running(port));
+  Deferred.forever(
+    (),
+    () =>
+      Clock.after(Time.Span.(of_sec(0.5)))
+      >>| (() => Log.Global.printf("conns: %d", Tcp.Server.num_connections(server)))
+  );
 };
 
 let socket_server = ((port, accepts), ()) => {

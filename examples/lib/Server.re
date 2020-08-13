@@ -34,12 +34,18 @@ let error_handler:
     ();
   };
 
-  let on_start = (port) => {
+  let on_start = (server, port) => {
     Fmt_tty.setup_std_outputs();
     Logs.set_level(Some(Logs.App));
     Logs.set_reporter(Logs_fmt.reporter());
     print_endline(Util.hello());
     print_endline(Util.running(port));
+    Deferred.forever(
+      (),
+      () =>
+        Clock.after(Time.Span.(of_sec(0.5)))
+        >>| (() => Log.Global.printf("conns: %d", Tcp.Server.num_connections(server)))
+    );
   };
 
   let ping_router: Router.requestHandler = (path, req, body) => {

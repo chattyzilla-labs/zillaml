@@ -69,8 +69,8 @@ let sha1 = s =>
       Server.create_connection_handler(~request_handler, ~error_handler)
     )
     >>= (
-      (_server) => {
-        on_start(port);
+      (server) => {
+        on_start(server, port);
         Deferred.never();
       }
     );
