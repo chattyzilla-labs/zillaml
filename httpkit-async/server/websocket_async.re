@@ -5,11 +5,12 @@ type ws_connection_handler('a) = {
   on_close: unit => unit
 };
 
-type ws_connection('a) = {
+type ws_connection('a, 'state) = {
   path: list(string),
   query: list((string, list(string))),
   wsd: Websocketzilla.Wsd.t,
-  send: 'a => unit
+  send: 'a => unit,
+  server_state: 'state
 };
 
 let regexComma = Str.regexp_string(",");

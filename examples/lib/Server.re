@@ -79,7 +79,8 @@ let socket_server = ((port, accepts), ()) => Server.start(
     ~check_for_websocket_request= (req) => Deferred.return(Websocket_async.upgrade_present(req.headers) && Websocket_async.default_ws_path(req)),
     ~on_ws_connect = ws => {
       { Websocket_async.on_message: (msg) => ws.send(msg |> Websocket_interface.string_of_client_to_server |> Websocket_interface.server_to_client_of_string), on_close: () => ()}
-    }
+    },
+    ~state=None
 );
 
 let server = ((port, accepts), ()) => Http.create_server(

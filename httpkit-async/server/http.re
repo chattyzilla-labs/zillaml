@@ -154,7 +154,7 @@ module Make_server_with_ws = (Ws: Websocket_interface) => {
       );
     };
   let websocket_handler =
-      (~on_ws_connect, req: Zillaml.Request.t, _client_address, wsd) => {
+      (~state, ~on_ws_connect, req: Zillaml.Request.t, _client_address, wsd) => {
     let accum = ref([]);
 
     let {Websocket_async.on_message, on_close} =
@@ -163,6 +163,7 @@ module Make_server_with_ws = (Ws: Websocket_interface) => {
         send: send(~wsd),
         path: get_path(req),
         query: get_query(req),
+        server_state: state
       });
     let finalise_content = accum_content =>
       String.concat(List.rev(accum_content));
@@ -238,11 +239,11 @@ module Make_server_with_ws = (Ws: Websocket_interface) => {
     Body.close_writer(body);
   };
 
-  let upgrade_handler = (~on_ws_connect, req, addr, upgrade, ()) => {
+  let upgrade_handler = (~state, ~on_ws_connect, req, addr, upgrade, ()) => {
     let ws_conn =
       Websocketzilla.Server_connection.create_websocket(
         ~error_handler=ws_error_handler,
-        websocket_handler(~on_ws_connect, req, addr),
+        websocket_handler(~state, ~on_ws_connect, req, addr),
       );
 
     upgrade(Gluten.make((module Websocketzilla.Server_connection), ws_conn));
@@ -285,6 +286,7 @@ module Make_server_with_ws = (Ws: Websocket_interface) => {
         ~check_for_websocket_request,
         addr,
         reqd: Gluten.Reqd.t(Zillaml.Reqd.t),
+        ~state
       ) => {
     let {Gluten.Reqd.reqd, upgrade} = reqd;
     let req = Zillaml.Reqd.request(reqd);
@@ -299,7 +301,7 @@ module Make_server_with_ws = (Ws: Websocket_interface) => {
           Websocketzilla.Handshake.respond_with_upgrade(
             ~sha1,
             reqd,
-            upgrade_handler(~on_ws_connect, req, addr, upgrade),
+            upgrade_handler(~state, ~on_ws_connect, req, addr, upgrade),
           )
         ) {
         | Ok () => Deferred.return()
@@ -327,6 +329,7 @@ module Make_server_with_ws = (Ws: Websocket_interface) => {
         ~on_ws_connect,
         ~check_for_websocket_request,
         ~req_logger,
+        ~state
       ) =>
     start(
       ~port,
@@ -338,6 +341,7 @@ module Make_server_with_ws = (Ws: Websocket_interface) => {
           ~http_router,
           ~on_ws_connect,
           ~check_for_websocket_request,
+          ~state
         ),
       ~error_handler=http_error_handler,
     );
