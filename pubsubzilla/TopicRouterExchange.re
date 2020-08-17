@@ -7,31 +7,47 @@ open Exchange;
  *  phantom typing for directory type for more efficient encoding of hashtags and stars
  */
 module Make = (Message: Message) => {
-  module Topic = {
-    module Directory = {
-      [@deriving (sexp, hash, bin_io, compare, yojson)]
-      type t =
-        | Hashtag
-        | Star
-        | Word(string);
+  module Topic: {
+    [@deriving (sexp, hash, bin_io, compare)]
+    type t;
+    let to_string: t => string;
+    module Directory:{ 
+      [@deriving (sexp, hash, bin_io, compare)]
+      type t;
+    };
+    let hashtag: Directory.t;
+    let star: Directory.t;
+    let dir: string => Directory.t;
+    let (>>): (Directory.t, Directory.t) => t; 
+  } = {
+    module Directory:{ 
+      [@deriving (sexp, hash, bin_io, compare)]
+      type t;
+      let hashtag: t;
+      let star: t;
+      let string_of_directory: t => string;
+      let dir: string => t;
+    } = {
+      [@deriving (sexp, hash, bin_io, compare)]
+      type t = string;
+      let hashtag = "#";
+      let star = "*";
+      let string_of_directory = s => s;
+      // need to throw error if string contains dot
+      let dir = str => sprintf("<%s>", str);
     };
 
-    [@deriving (sexp, bin_io, hash, compare)]
-    type t = list(Directory.t);
-    
-    let string_of_directory =
-      fun
-      | Directory.Hashtag => "#"
-      | Star => "*"
-      | Word(str) => str;
+    let hashtag = Directory.hashtag;
+    let star = Directory.star;
+    let string_of_directory = Directory.string_of_directory;
+    let dir = Directory.dir;
 
-    let to_string =
-      fun
-      | [] => ""
-      | [hd, ...rest] =>
-        List.fold(rest, ~init=string_of_directory(hd), ~f=(a, b) =>
-          a ++ "/" ++ string_of_directory(b)
-        );
+    [@deriving (sexp, bin_io, hash, compare)]
+    type t = string;
+  
+    let (>>) = (a, b) => sprintf("%s.%s", string_of_directory(a), string_of_directory(b));
+
+    let to_string = a => a;
   };
 
   module Message = Message;
