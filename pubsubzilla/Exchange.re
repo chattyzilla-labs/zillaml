@@ -36,6 +36,8 @@ module type Exchange = {
 // TODO: implement a version of this functor that uses Rpc.Expert implementation for pub;ish messages in Server module to avoid allocating the message payload to an ocaml type via bin_prot if the message is just going to be serialized and  sent to a subscriber
 // TODO: LOOK into using rpc parrallel for parallel processing of topic meta and what not
 //  https://github.com/janestreet/rpc_parallel/blob/master/example/stream_workers.ml
+//https://ocaml.janestreet.com/ocaml-core/latest/doc/bin_prot/Bin_prot/Blob/index.html to avoid uneeded serialization
+// https://github.com/janestreet/core_kernel/blob/master/bus/src/bus.mli for client side optimization to avoid multiple subscriptions to the same topic
 module MakeExchange = (Exchange: Exchange) => {
   
   include Exchange;

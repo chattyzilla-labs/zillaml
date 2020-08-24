@@ -163,7 +163,8 @@ module Make_server_with_ws = (Ws: Websocket_interface) => {
         send: send(~wsd),
         path: get_path(req),
         query: get_query(req),
-        server_state: state
+        server_state: state,
+        headers: req.headers
       });
     let finalise_content = accum_content =>
       String.concat(List.rev(accum_content));

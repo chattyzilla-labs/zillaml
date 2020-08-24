@@ -10,7 +10,8 @@ type ws_connection('a, 'state) = {
   query: list((string, list(string))),
   wsd: Websocketzilla.Wsd.t,
   send: 'a => unit,
-  server_state: 'state
+  server_state: 'state,
+  headers: Zillaml.Headers.t
 };
 
 let regexComma = Str.regexp_string(",");
