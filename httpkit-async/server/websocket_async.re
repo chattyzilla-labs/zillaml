@@ -11,7 +11,7 @@ type ws_connection('a, 'state) = {
   wsd: Websocketzilla.Wsd.t,
   send: 'a => unit,
   server_state: 'state,
-  headers: Zillaml.Headers.t
+  req: Zillaml.Request.t
 };
 
 let regexComma = Str.regexp_string(",");
