@@ -46,13 +46,11 @@
   },
   "dependencies": {
     "@esy-ocaml/reason": ">=3.6.0",
-    "@opam/alcotest": "0.8.5",
     "@opam/angstrom": "0.12.1",
     "@opam/astring": "*",
     "@opam/async": "v0.14.0",
     "@opam/async_ssl": "v0.14.0",
     "@opam/base64": "3.2.0",
-    "@opam/benchmark": "1.6",
     "@opam/bigstringaf": "0.6.0",
     "@opam/caqti": "*",
     "@opam/caqti-async": "*",
@@ -95,6 +93,8 @@
     "@opam/odoc": "*",
     "@opam/dune": "2.6.0",
     "@opam/dune-configurator": "2.6.0",
-    "@opam/ocaml-lsp-server": "ocaml/ocaml-lsp:ocaml-lsp-server.opam"
+    "@opam/ocaml-lsp-server": "ocaml/ocaml-lsp:ocaml-lsp-server.opam",
+     "@opam/alcotest": "0.8.5",
+    "@opam/benchmark": "1.6"
   }
 }
